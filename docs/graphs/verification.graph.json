@@ -1,0 +1,44 @@
+[
+  {
+    "requirementId": "REQ-001",
+    "implementationArtifacts": ["server.ts", "src/adapters/spritecollab/index.ts"],
+    "testIds": ["TEST-001"],
+    "evidence": ["Índice remoto do SpriteCollab carregado e pesquisável com filtro '0025'"],
+    "verified": true
+  },
+  {
+    "requirementId": "REQ-002",
+    "implementationArtifacts": ["src/domain/parser/animDataParser.ts", "src/components/AnimationViewer.tsx"],
+    "testIds": ["TEST-002"],
+    "evidence": ["AnimData.xml do Sprite 0025 interpretado com suporte a 8 direções e reprodução de frames"],
+    "verified": true
+  },
+  {
+    "requirementId": "REQ-003",
+    "implementationArtifacts": ["src/stores/localStore.ts", "src/components/PixelEditor.tsx"],
+    "testIds": ["TEST-003"],
+    "evidence": ["Cópia local criada no IndexedDB, edição pixel-art funcional e persistência no reload"],
+    "verified": true
+  },
+  {
+    "requirementId": "REQ-004",
+    "implementationArtifacts": ["server/services/geminiService.ts", "src/services/alphaCleaner.ts"],
+    "testIds": ["TEST-004"],
+    "evidence": ["Geração Gemini/Nano Banana com matte limpo por algoritmo de inundação e alpha validado"],
+    "verified": true
+  },
+  {
+    "requirementId": "REQ-005",
+    "implementationArtifacts": ["src/domain/behavior/behaviorEngine.ts", "src/components/BehaviorLab.tsx"],
+    "testIds": ["TEST-005"],
+    "evidence": ["NPC autônomo andando, comendo, descansando e reage a toques com máquina de estados"],
+    "verified": true
+  },
+  {
+    "requirementId": "REQ-006",
+    "implementationArtifacts": ["src/utils/exporter.ts", "src/utils/importer.ts"],
+    "testIds": ["TEST-006"],
+    "evidence": ["Exportação ZIP gerando AnimData.xml + PNGs e reimportação sem perda de integridade"],
+    "verified": true
+  }
+]

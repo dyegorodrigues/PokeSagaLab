@@ -1,0 +1,44 @@
+[
+  {
+    "id": "ART-SERVER",
+    "path": "server.ts",
+    "type": "source",
+    "dependsOn": [],
+    "supportsRequirements": ["REQ-001", "REQ-004"]
+  },
+  {
+    "id": "ART-TYPES",
+    "path": "src/types/index.ts",
+    "type": "source",
+    "dependsOn": [],
+    "supportsRequirements": ["REQ-001", "REQ-002", "REQ-003", "REQ-004", "REQ-005", "REQ-006"]
+  },
+  {
+    "id": "ART-PARSER",
+    "path": "src/domain/parser/animDataParser.ts",
+    "type": "source",
+    "dependsOn": ["ART-TYPES"],
+    "supportsRequirements": ["REQ-002"]
+  },
+  {
+    "id": "ART-STORE",
+    "path": "src/stores/localStore.ts",
+    "type": "source",
+    "dependsOn": ["ART-TYPES"],
+    "supportsRequirements": ["REQ-001", "REQ-003", "REQ-006"]
+  },
+  {
+    "id": "ART-CLEANER",
+    "path": "src/services/alphaCleaner.ts",
+    "type": "source",
+    "dependsOn": ["ART-TYPES"],
+    "supportsRequirements": ["REQ-004"]
+  },
+  {
+    "id": "ART-BEHAVIOR",
+    "path": "src/domain/behavior/behaviorEngine.ts",
+    "type": "source",
+    "dependsOn": ["ART-TYPES"],
+    "supportsRequirements": ["REQ-005"]
+  }
+]

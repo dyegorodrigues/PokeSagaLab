@@ -1,0 +1,32 @@
+{
+  "entities": {
+    "Creature": {
+      "relations": {
+        "hasMany": ["Animation", "Portrait", "Version"],
+        "hasOne": ["StyleDNA", "BehaviorGraph"]
+      }
+    },
+    "Animation": {
+      "relations": {
+        "hasMany": ["Direction"],
+        "belongsTo": ["Creature"]
+      }
+    },
+    "Direction": {
+      "relations": {
+        "hasMany": ["Frame"],
+        "belongsTo": ["Animation"]
+      }
+    },
+    "Frame": {
+      "relations": {
+        "belongsTo": ["Direction"]
+      }
+    },
+    "BehaviorGraph": {
+      "relations": {
+        "hasMany": ["State", "Transition"]
+      }
+    }
+  }
+}

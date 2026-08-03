@@ -1,0 +1,62 @@
+[
+  {
+    "id": "REQ-001",
+    "title": "Sincronização e Busca no SpriteCollab",
+    "status": "in_progress",
+    "acceptanceCriteria": ["Indexar o repositório remoto", "Permitir pesquisar por 0025 / Pikachu", "Carregar metadados e arquivos sob demanda"],
+    "dependencies": [],
+    "artifacts": ["server.ts", "src/adapters/spritecollab/index.ts"],
+    "tests": ["TEST-001"],
+    "evidence": []
+  },
+  {
+    "id": "REQ-002",
+    "title": "Parser e Player do AnimData.xml",
+    "status": "in_progress",
+    "acceptanceCriteria": ["Interpretar AnimData.xml", "Carregar Anims, Offsets e Shadows", "Reproduzir animações reais com troca de direção (8 direções)"],
+    "dependencies": ["REQ-001"],
+    "artifacts": ["src/domain/parser/animDataParser.ts", "src/components/AnimationViewer.tsx"],
+    "tests": ["TEST-002"],
+    "evidence": []
+  },
+  {
+    "id": "REQ-003",
+    "title": "Duplicação Local e Edição",
+    "status": "in_progress",
+    "acceptanceCriteria": ["Duplicar personagem remoto para versão local", "Editar frames no Pixel Editor", "Salvar e manter persistência em IndexedDB"],
+    "dependencies": ["REQ-002"],
+    "artifacts": ["src/stores/localStore.ts", "src/components/PixelEditor.tsx"],
+    "tests": ["TEST-003"],
+    "evidence": []
+  },
+  {
+    "id": "REQ-004",
+    "title": "Geração e Edição de IA com Nano Banana",
+    "status": "in_progress",
+    "acceptanceCriteria": ["Criar GenerationPlan via Gemini", "Gerar/editar sprite com Nano Banana", "Limpar e validar canal alpha determinístico", "Aprovação/rejeição de versão"],
+    "dependencies": ["REQ-003"],
+    "artifacts": ["server/services/geminiService.ts", "src/services/alphaCleaner.ts"],
+    "tests": ["TEST-004"],
+    "evidence": []
+  },
+  {
+    "id": "REQ-005",
+    "title": "Laboratório de Comportamento de NPC",
+    "status": "in_progress",
+    "acceptanceCriteria": ["Máquina de estados para autossimulação de NPC", "Vadiar, comer, dormir, reagir ao toque", "Renderização ao vivo com física e colisão leve"],
+    "dependencies": ["REQ-002"],
+    "artifacts": ["src/domain/behavior/behaviorEngine.ts", "src/components/BehaviorLab.tsx"],
+    "tests": ["TEST-005"],
+    "evidence": []
+  },
+  {
+    "id": "REQ-006",
+    "title": "Exportação, Reimportação e Round-Trip ZIP",
+    "status": "in_progress",
+    "acceptanceCriteria": ["Exportar pacote ZIP com AnimData.xml e PNGs", "Reimportar pacote ZIP para biblioteca local", "Verificar equivalência semântica e integridade dos dados"],
+    "dependencies": ["REQ-003"],
+    "artifacts": ["src/utils/exporter.ts", "src/utils/importer.ts"],
+    "tests": ["TEST-006"],
+    "evidence": []
+  }
+]

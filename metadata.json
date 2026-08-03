@@ -1,0 +1,6 @@
+{
+  "name": "SAGA SpriteLab AI",
+  "description": "Laboratório de engenharia, edição, geração e simulação de sprites e NPCs do SpriteCollab",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
