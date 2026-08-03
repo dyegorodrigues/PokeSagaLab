@@ -641,8 +641,8 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                   <span className="text-[10px] text-slate-500 font-mono">Pivot:</span>
                   <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-0.5">
                     <button onClick={() => handleNudgeOrigin(1, 0)} title="Mover sprite p/ Esquerda (deslocar Pivot Direita)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowLeft className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleNudgeOrigin(0, -1)} title="Mover sprite p/ Baixo (deslocar Pivot Cima)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowUp className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleNudgeOrigin(0, 1)} title="Mover sprite p/ Cima (deslocar Pivot Baixo)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowDown className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => handleNudgeOrigin(0, 1)} title="Mover sprite p/ Cima (deslocar Pivot Baixo)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowUp className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => handleNudgeOrigin(0, -1)} title="Mover sprite p/ Baixo (deslocar Pivot Cima)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowDown className="w-3.5 h-3.5" /></button>
                     <button onClick={() => handleNudgeOrigin(-1, 0)} title="Mover sprite p/ Direita (deslocar Pivot Esquerda)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowRight className="w-3.5 h-3.5" /></button>
                   </div>
                 </div>

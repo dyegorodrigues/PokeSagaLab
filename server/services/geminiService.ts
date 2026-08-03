@@ -42,20 +42,7 @@ export async function createGenerationPlan(
   const ai = getAiClient();
 
   if (!ai) {
-    // Smart fallback plan when API key is not present
-    return {
-      id: `plan_${Date.now()}`,
-      targetCreatureId,
-      targetAnimationName,
-      targetDirection,
-      operation: prompt.toLowerCase().includes("evolucao") || prompt.toLowerCase().includes("evoluir") ? "new_creature" : "edit_frame",
-      prompt,
-      styleNotes: "Pixel art profissional estilo PMDCollab, contornos vivos, sem blur, fundo sólido Magenta #FF00FF",
-      matteColor: "#FF00FF",
-      expectedFrameCount: 1,
-      frameWidth: 32,
-      frameHeight: 32,
-    };
+    throw new Error("A chave da API do Gemini (GEMINI_API_KEY) não está configurada no ambiente. Adicione a chave nas configurações do projeto para usar a IA.");
   }
 
   try {
@@ -128,6 +115,9 @@ export async function generateSpriteImageWithNanoBanana(
   base64ReferenceImage?: string
 ): Promise<string> {
   const ai = getAiClient();
+  if (!ai) {
+    throw new Error("A chave da API do Gemini (GEMINI_API_KEY) não está configurada no ambiente. Adicione a chave nas configurações do projeto para gerar imagens.");
+  }
 
   if (ai) {
     const fullPrompt =
