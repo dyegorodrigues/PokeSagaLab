@@ -110,14 +110,14 @@ export async function sliceSpriteSheet(
   const imgW = (imageSource as any).naturalWidth || (imageSource as any).width || frameWidth;
   const imgH = (imageSource as any).naturalHeight || (imageSource as any).height || frameHeight;
 
-  const sourceFrameWidth = durations.length > 0 ? Math.floor(imgW / durations.length) : Math.floor(imgW);
-  const sourceFrameHeight = Math.floor(imgH / directionsCount);
+  const sourceFrameWidth = frameWidth;
+  const sourceFrameHeight = frameHeight;
 
-  const actualCols = durations.length > 0 ? durations.length : 1;
-  const actualRows = directionsCount;
+  const actualCols = Math.floor(imgW / sourceFrameWidth);
+  const actualRows = Math.floor(imgH / sourceFrameHeight);
 
-  const totalFrames = durations.length;
-  const finalDurations = durations;
+  const totalFrames = Math.max(actualCols, durations.length > 0 ? durations.length : actualCols);
+  const finalDurations = durations.length > 0 ? durations : Array(totalFrames).fill(6);
 
   const framesByDirection: Record<number, Frame[]> = {};
 
@@ -170,13 +170,9 @@ export async function sliceSpriteSheet(
 
       ctx.clearRect(0, 0, frameWidth, frameHeight);
 
-      // Target center of canvas
-      const targetCenterX = Math.floor(frameWidth / 2);
-      const targetCenterY = Math.floor(frameHeight / 2);
-
-      // We want originX, originY of the source frame to land at targetCenterX, targetCenterY
-      const dx = targetCenterX - originX;
-      const dy = targetCenterY - originY;
+      // Center the extracted slice in the canvas (in case sourceFrame is smaller)
+      const dx = Math.floor((frameWidth - sourceFrameWidth) / 2);
+      const dy = Math.floor((frameHeight - sourceFrameHeight) / 2);
 
       ctx.drawImage(
         imageSource,
@@ -199,7 +195,7 @@ export async function sliceSpriteSheet(
         frameIndex: f,
         dataUrl: frameDataUrl,
         duration: finalDurations[f] || 6,
-        origin: { x: targetCenterX, y: targetCenterY },
+        origin: { x: originX, y: originY },
       });
     }
   }

@@ -19,6 +19,8 @@ import {
   Zap,
   ArrowLeft,
   ArrowRight,
+  ArrowUp,
+  ArrowDown,
   Plus,
   Trash2,
   Clock,
@@ -157,6 +159,27 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
 
     onUpdateCreature(updatedCreature);
     setCurrentFrameIndex(Math.max(0, fIndex - 1));
+  };
+
+  const handleNudgeOrigin = (dx: number, dy: number) => {
+    if (!activeAnim || !onUpdateCreature || !currentFrame) return;
+    const updatedCreature: Creature = JSON.parse(JSON.stringify(creature));
+    const targetAnim = updatedCreature.animations.find((a) => a.id === activeAnim.id);
+    if (!targetAnim) return;
+
+    // Apply offset change to all directions for this frame index to keep it consistent
+    // if we just want it to be per-frame-index, or per-direction?
+    // Actually, PMD offsets apply to the specific frame across the entire animation typically, 
+    // or we can just apply it to the specific directional frame. Let's do specific directional frame for precise control.
+    const frameToUpdate = targetAnim.framesByDirection[direction][currentFrameIndex];
+    if (frameToUpdate) {
+      if (!frameToUpdate.origin) {
+        frameToUpdate.origin = { x: Math.floor(targetAnim.frameWidth / 2), y: Math.floor(targetAnim.frameHeight / 2) };
+      }
+      frameToUpdate.origin.x += dx;
+      frameToUpdate.origin.y += dy;
+      onUpdateCreature(updatedCreature);
+    }
   };
 
   const handleChangeDuration = (fIndex: number, newDur: number) => {
@@ -497,11 +520,11 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                 </div>
 
                 {currentFrame?.dataUrl ? (
-                  <div className="relative flex items-center justify-center">
+                  <div className="relative flex items-center justify-center w-full h-full pointer-events-none">
                     {/* Shadow preview under sprite */}
                     {showShadow && (
                       <div
-                        className="absolute bottom-1 bg-black/40 rounded-full blur-[1px]"
+                        className="absolute bg-black/40 rounded-full blur-[1px]"
                         style={{
                           width: (activeAnim?.frameWidth || 32) * (zoomLevel * 0.6),
                           height: 8 * (zoomLevel * 0.4),
@@ -513,20 +536,22 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                     <img
                       src={currentFrame.dataUrl}
                       alt={`Frame ${currentFrameIndex}`}
-                      className="image-pixelated drop-shadow-xl relative z-10 transition-transform"
+                      className="image-pixelated drop-shadow-xl absolute z-10"
                       style={{
                         width: (activeAnim?.frameWidth || 32) * zoomLevel,
                         height: (activeAnim?.frameHeight || 32) * zoomLevel,
+                        transform: `translate(${( (activeAnim?.frameWidth || 32) / 2 - (currentFrame.origin?.x || (activeAnim?.frameWidth || 32) / 2) ) * zoomLevel}px, ${( (activeAnim?.frameHeight || 32) / 2 - (currentFrame.origin?.y || (activeAnim?.frameHeight || 32) / 2) ) * zoomLevel}px)`
                       }}
                     />
 
                     {/* Pixel Grid Overlay */}
                     {showGrid && (
                       <div
-                        className="absolute inset-0 border border-indigo-500/30 pointer-events-none z-20"
+                        className="absolute border border-indigo-500/30 pointer-events-none z-20"
                         style={{
                           width: (activeAnim?.frameWidth || 32) * zoomLevel,
                           height: (activeAnim?.frameHeight || 32) * zoomLevel,
+                          transform: `translate(${( (activeAnim?.frameWidth || 32) / 2 - (currentFrame.origin?.x || (activeAnim?.frameWidth || 32) / 2) ) * zoomLevel}px, ${( (activeAnim?.frameHeight || 32) / 2 - (currentFrame.origin?.y || (activeAnim?.frameHeight || 32) / 2) ) * zoomLevel}px)`
                         }}
                       />
                     )}
@@ -611,6 +636,14 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                     >
                       <ArrowRight className="w-3.5 h-3.5" />
                     </button>
+                  </div>
+                  <div className="w-px h-5 bg-slate-800 mx-1" />
+                  <span className="text-[10px] text-slate-500 font-mono">Pivot:</span>
+                  <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-0.5">
+                    <button onClick={() => handleNudgeOrigin(1, 0)} title="Mover sprite p/ Esquerda (deslocar Pivot Direita)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowLeft className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => handleNudgeOrigin(0, -1)} title="Mover sprite p/ Baixo (deslocar Pivot Cima)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowUp className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => handleNudgeOrigin(0, 1)} title="Mover sprite p/ Cima (deslocar Pivot Baixo)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowDown className="w-3.5 h-3.5" /></button>
+                    <button onClick={() => handleNudgeOrigin(-1, 0)} title="Mover sprite p/ Direita (deslocar Pivot Esquerda)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowRight className="w-3.5 h-3.5" /></button>
                   </div>
                 </div>
 

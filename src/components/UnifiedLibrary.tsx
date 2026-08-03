@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Creature, SourceKind, SpriteCollabIndexItem } from "../types";
-import { Search, RefreshCw, Copy, Film, Bot, Download, Sparkles, FolderPlus, PlusCircle, X } from "lucide-react";
+import { Search, RefreshCw, Copy, Film, Bot, Download, Sparkles, FolderPlus, PlusCircle, X, Trash2 } from "lucide-react";
 
 interface UnifiedLibraryProps {
   remoteIndex: SpriteCollabIndexItem[];
@@ -247,7 +247,10 @@ export const UnifiedLibrary: React.FC<UnifiedLibraryProps> = ({
                 </button>
 
                 <button
-                  onClick={() => onOpenNpcTest(creature)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenNpcTest(creature);
+                  }}
                   className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer min-w-[100px]"
                 >
                   <Bot className="w-3 h-3 text-emerald-400" />
@@ -255,7 +258,10 @@ export const UnifiedLibrary: React.FC<UnifiedLibraryProps> = ({
                 </button>
 
                 <button
-                  onClick={() => onDuplicateToLocal(creature)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDuplicateToLocal(creature);
+                  }}
                   title="Duplicar"
                   className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition cursor-pointer"
                 >
@@ -263,7 +269,10 @@ export const UnifiedLibrary: React.FC<UnifiedLibraryProps> = ({
                 </button>
 
                 <button
-                  onClick={() => onExportZip(creature)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onExportZip(creature);
+                  }}
                   title="Exportar ZIP"
                   className="flex items-center justify-center gap-1 px-2 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition cursor-pointer"
                 >
@@ -272,7 +281,8 @@ export const UnifiedLibrary: React.FC<UnifiedLibraryProps> = ({
 
                 {creature.sourceKind !== "remote" && (
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
+                      e.stopPropagation();
                       if (window.confirm(`Tem certeza que deseja deletar ${creature.displayName}?`)) {
                         onDeleteCreature(creature.id);
                       }
