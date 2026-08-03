@@ -42,6 +42,11 @@ export async function importCreatureFromZip(file: File): Promise<Creature> {
       zip.file(`${animName}.png`) ||
       zip.file(new RegExp(`${animName}.*\\.png$`, "i"))[0];
 
+    const offsetsFile = 
+      zip.file(`${animName}-Offsets.png`) ||
+      zip.file(new RegExp(`/${animName}-Offsets\\.png$`, "i"))[0] ||
+      zip.file(new RegExp(`^${animName}-Offsets\\.png$`, "i"))[0];
+
     let framesByDir: Record<number, Frame[]> = {};
 
     if (imageFile) {
@@ -55,6 +60,16 @@ export async function importCreatureFromZip(file: File): Promise<Creature> {
         img.src = imgDataUrl;
       });
 
+      let offImg = undefined;
+      if (offsetsFile) {
+        const offBase64 = await offsetsFile.async("base64");
+        offImg = new Image();
+        await new Promise((resolve) => {
+          offImg.onload = resolve;
+          offImg.src = `data:image/png;base64,${offBase64}`;
+        });
+      }
+
       framesByDir = await sliceSpriteSheet(
         img,
         animDef.frameWidth,
@@ -62,7 +77,8 @@ export async function importCreatureFromZip(file: File): Promise<Creature> {
         animDef.durations,
         animName,
         animId,
-        8
+        8,
+        offImg
       );
     } else {
       // Fallback empty frames if PNG missing

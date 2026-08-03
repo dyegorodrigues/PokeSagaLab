@@ -1,32 +1,25 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-03T22:10:00Z",
-  "activeNodeId": "STABILIZE-001",
+  "updatedAt": "2026-08-03T22:45:00Z",
+  "activeNodeId": "STABILIZE-003",
   "nodes": [
     {
-      "id": "STABILIZE-001",
-      "title": "Estabilizar fluxo vertical de SpriteCollab (0025)",
+      "id": "STABILIZE-003",
+      "title": "Fix Delete Button, Add Global Undo/Redo, Fix Zip Importer Offsets",
       "type": "requirement",
       "status": "verified",
       "priority": "high",
-      "risk": "medium",
+      "risk": "low",
       "dependsOn": [],
       "acceptanceCriteria": [
-        "Sincronizar SpriteCollab",
-        "Pesquisar personagem 0025",
-        "Abrir personagem",
-        "Interpretar AnimData.xml (offsets verificados via Node.js)",
-        "Listar animações",
-        "Reproduzir Idle e Walk",
-        "Duplicar para projeto local (stopPropagation corrigido)",
-        "Salvar",
-        "Recarregar página",
-        "Personagem local permanece na biblioteca (persistência IndexedDB e botões reativos)"
+        "Delete button in Unified Library works without window.confirm",
+        "Undo and Redo buttons are globally accessible in the Header",
+        "Zip importer loads Offsets.png to prevent broken origins/bolinha fallback"
       ],
       "artifacts": [],
-      "tests": ["test-parse.cjs executado para validar Offsets"],
-      "evidence": ["Math de actualCols validado", "Offsets Extraídos no backend fakeam a matriz corretamente", "Direcionais do Pivot consertados"],
-      "notes": ["O usuário achava que o Nano Banana gerava monstros repetidos, mas era o fallback silencioso procedural sendo acionado pela falta de GEMINI_API_KEY. O fallback foi substituído por throw Error."]
+      "tests": [],
+      "evidence": ["Replaced window.confirm with deleteConfirmId state", "App.tsx now maintains a global history stack", "importer.ts uses offsets parsing"],
+      "notes": ["User was very frustrated with iframe-blocked window.confirm and missing global undo/redo"]
     }
   ]
 }

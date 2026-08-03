@@ -46,6 +46,7 @@ export const UnifiedLibrary: React.FC<UnifiedLibraryProps> = ({
   const [newGridSize, setNewGridSize] = useState<32 | 48 | 64>(32);
   const [newColor, setNewColor] = useState("#facc15");
   const [isCreating, setIsCreating] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -283,14 +284,22 @@ export const UnifiedLibrary: React.FC<UnifiedLibraryProps> = ({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (window.confirm(`Tem certeza que deseja deletar ${creature.displayName}?`)) {
+                      if (deleteConfirmId === creature.id) {
                         onDeleteCreature(creature.id);
+                        setDeleteConfirmId(null);
+                      } else {
+                        setDeleteConfirmId(creature.id);
+                        setTimeout(() => setDeleteConfirmId(null), 3000);
                       }
                     }}
                     title="Deletar"
-                    className="flex items-center justify-center gap-1 px-2 py-1.5 bg-rose-900/40 hover:bg-rose-800/60 text-rose-300 text-xs font-medium rounded-lg border border-rose-900/50 transition cursor-pointer"
+                    className={`flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium rounded-lg border transition cursor-pointer ${
+                      deleteConfirmId === creature.id
+                        ? "bg-rose-600 text-white border-rose-500"
+                        : "bg-rose-900/40 hover:bg-rose-800/60 text-rose-300 border-rose-900/50"
+                    }`}
                   >
-                    <Trash2 className="w-3 h-3" />
+                    {deleteConfirmId === creature.id ? "Confirma?" : <Trash2 className="w-3 h-3" />}
                   </button>
                 )}
               </div>

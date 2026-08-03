@@ -1,5 +1,5 @@
 import React from "react";
-import { Sparkles, Library, Film, Edit3, Bot, Play, Download, Activity } from "lucide-react";
+import { Sparkles, Library, Film, Edit3, Bot, Play, Download, Activity, Undo2, Redo2 } from "lucide-react";
 
 export type TabType =
   | "library"
@@ -16,6 +16,10 @@ interface HeaderProps {
   setActiveTab: (tab: TabType) => void;
   activeCreatureName?: string;
   sourceKind?: string;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -23,6 +27,10 @@ export const Header: React.FC<HeaderProps> = ({
   setActiveTab,
   activeCreatureName,
   sourceKind,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }) => {
   const tabs = [
     { id: "library", label: "Biblioteca Unificada", icon: Library },
@@ -69,6 +77,28 @@ export const Header: React.FC<HeaderProps> = ({
               <div className="flex items-center gap-2 text-xs text-slate-400">
                 <span>Ativo: <strong className="text-slate-200">{activeCreatureName}</strong></span>
                 {getSourceBadge(sourceKind)}
+                
+                {/* Global Undo/Redo */}
+                {(onUndo || onRedo) && (
+                  <div className="flex items-center gap-1 ml-2 pl-2 border-l border-slate-700">
+                    <button
+                      onClick={onUndo}
+                      disabled={!canUndo}
+                      className="p-1 rounded bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                      title="Desfazer"
+                    >
+                      <Undo2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={onRedo}
+                      disabled={!canRedo}
+                      className="p-1 rounded bg-slate-800 text-slate-300 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer transition-colors"
+                      title="Refazer"
+                    >
+                      <Redo2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

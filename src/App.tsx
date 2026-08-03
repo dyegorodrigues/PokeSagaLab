@@ -17,6 +17,8 @@ export default function App() {
   const [remoteIndex, setRemoteIndex] = useState<SpriteCollabIndexItem[]>([]);
   const [localCreatures, setLocalCreatures] = useState<Creature[]>([]);
   const [activeCreature, setActiveCreature] = useState<Creature | null>(null);
+  const [history, setHistory] = useState<Creature[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
 
   const [isLoading, setIsLoading] = useState(false);
 
@@ -33,14 +35,24 @@ export default function App() {
     syncRemoteIndex();
   }, []);
 
-  const loadLocalDatabase = async () => {
+  const loadLocalDatabase = async (preventAutoSelect = false) => {
     try {
       const stored = await LocalStore.getAllLocalCreatures();
       setLocalCreatures(stored);
 
-      // Default active creature if none selected
-      if (!activeCreature && stored.length > 0) {
-        setActiveCreature(stored[0]);
+      // Default active creature if none selected, OR if the active creature is no longer in the DB (was deleted)
+      // BUT only if we aren't explicitly preventing auto-select.
+      if (!preventAutoSelect && stored.length > 0) {
+        let toSelect: Creature | null = null;
+        if (!activeCreature) {
+          toSelect = stored[0];
+        } else {
+          const stillExists = stored.some((c) => c.id === activeCreature.id);
+          if (!stillExists) toSelect = stored[0];
+        }
+        if (toSelect) {
+          handleSetActiveCreature(toSelect);
+        }
       }
     } catch (err) {
       console.error("Failed to load local DB:", err);
@@ -319,15 +331,15 @@ export default function App() {
 
     await LocalStore.saveCreature(newCreature);
     await loadLocalDatabase();
-    setActiveCreature(newCreature);
+    handleSetActiveCreature(newCreature);
     setActiveTab("studio");
     return newCreature;
   };
 
   const handleDuplicateToLocal = async (creature: Creature) => {
     const localCopy = await LocalStore.duplicateToLocal(creature);
-    await loadLocalDatabase();
-    setActiveCreature(localCopy);
+    await loadLocalDatabase(true);
+    handleSetActiveCreature(localCopy);
     setActiveTab("studio");
   };
 
@@ -337,36 +349,85 @@ export default function App() {
     frameIndex: number,
     direction: number
   ) => {
-    setActiveCreature(creature);
+    handleSetActiveCreature(creature);
     setEditorParams({ animationId, frameIndex, direction });
     setActiveTab("pixel_editor");
   };
 
   const handleOpenAiLab = (creature: Creature, animationName: string, direction: number) => {
-    setActiveCreature(creature);
+    handleSetActiveCreature(creature);
     setActiveTab("ai_lab");
   };
 
   const handleOpenNpcTest = (creature: Creature) => {
-    setActiveCreature(creature);
+    handleSetActiveCreature(creature);
     setActiveTab("behavior_lab");
   };
 
   const handleSavedCreature = async (updated: Creature) => {
     if (updated.sourceKind === "local") {
       await LocalStore.saveCreature(updated);
-      await loadLocalDatabase();
+      await loadLocalDatabase(true); // Don't auto-select while saving
     }
+    
+    // Update history
+    const newHist = history.slice(0, historyIndex + 1);
+    newHist.push(updated);
+    setHistory(newHist);
+    setHistoryIndex(newHist.length - 1);
+    
     setActiveCreature(updated);
+  };
+
+  const handleUndo = async () => {
+    if (historyIndex > 0) {
+      const prev = history[historyIndex - 1];
+      setHistoryIndex(historyIndex - 1);
+      setActiveCreature(prev);
+      if (prev.sourceKind === "local") {
+        await LocalStore.saveCreature(prev);
+        await loadLocalDatabase(true);
+      }
+    }
+  };
+
+  const handleRedo = async () => {
+    if (historyIndex < history.length - 1) {
+      const next = history[historyIndex + 1];
+      setHistoryIndex(historyIndex + 1);
+      setActiveCreature(next);
+      if (next.sourceKind === "local") {
+        await LocalStore.saveCreature(next);
+        await loadLocalDatabase(true);
+      }
+    }
+  };
+
+  const handleSetActiveCreature = (c: Creature | null) => {
+    if (activeCreature?.id === c?.id) {
+      // Just update reference, don't reset history if it's the same creature
+      setActiveCreature(c);
+      return;
+    }
+    
+    setActiveCreature(c);
+    if (c) {
+      setHistory([c]);
+      setHistoryIndex(0);
+    } else {
+      setHistory([]);
+      setHistoryIndex(-1);
+    }
   };
 
   const handleDeleteCreature = async (id: string) => {
     await LocalStore.deleteCreature(id);
-    if (activeCreature?.id === id) {
-      setActiveCreature(null);
+    const isActive = activeCreature?.id === id;
+    if (isActive) {
+      handleSetActiveCreature(null);
       setActiveTab("library");
     }
-    await loadLocalDatabase();
+    await loadLocalDatabase(isActive); // pass preventAutoSelect if we just deleted the active one
   };
 
   return (
@@ -376,6 +437,10 @@ export default function App() {
         setActiveTab={setActiveTab}
         activeCreatureName={activeCreature?.displayName}
         sourceKind={activeCreature?.sourceKind}
+        canUndo={historyIndex > 0}
+        canRedo={historyIndex < history.length - 1}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
       />
 
       <main className="transition-all">
@@ -384,13 +449,13 @@ export default function App() {
             remoteIndex={remoteIndex}
             localCreatures={localCreatures}
             onSelectCreature={(c) => {
-              setActiveCreature(c);
+              handleSetActiveCreature(c);
               setActiveTab("studio");
             }}
             onDuplicateToLocal={handleDuplicateToLocal}
             onOpenNpcTest={handleOpenNpcTest}
             onExportZip={(c) => {
-              setActiveCreature(c);
+              handleSetActiveCreature(c);
               setActiveTab("export_import");
             }}
             onDeleteCreature={handleDeleteCreature}
@@ -409,7 +474,7 @@ export default function App() {
             onOpenAiLab={handleOpenAiLab}
             onOpenNpcTest={handleOpenNpcTest}
             onExportZip={(c) => {
-              setActiveCreature(c);
+              handleSetActiveCreature(c);
               setActiveTab("export_import");
             }}
             onUpdateCreature={handleSavedCreature}

@@ -24,6 +24,8 @@ import {
   Plus,
   Trash2,
   Clock,
+  Undo2,
+  Redo2,
 } from "lucide-react";
 
 interface AnimationStudioProps {
