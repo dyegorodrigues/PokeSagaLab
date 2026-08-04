@@ -1,219 +1,260 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Activity,
+  Apple,
+  Bot,
+  Heart,
+  Pause,
+  Play,
+  ShieldAlert,
+  Swords,
+} from "lucide-react";
 import { Creature } from "../types";
 import { BehaviorEngine } from "../domain/behavior/behaviorEngine";
-import { Play, Pause, Bot, Apple, Heart, Activity, Zap, Moon } from "lucide-react";
 
 interface BehaviorLabProps {
   creature: Creature;
 }
 
-export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
-  const [engine] = useState(() => {
-    const e = new BehaviorEngine(640, 360);
-    e.setAvailableActions(creature.animations.map(a => a.name.toLowerCase()));
-    return e;
-  });
+type SceneTheme = "grass" | "dungeon" | "town";
 
+function drawScene(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  theme: SceneTheme,
+) {
+  context.clearRect(0, 0, width, height);
+  if (theme === "grass") {
+    context.fillStyle = "#174b35";
+    context.fillRect(0, 0, width, height);
+    context.fillStyle = "#1d5d3f";
+    for (let y = 0; y < height; y += 24) {
+      for (let x = 0; x < width; x += 24) {
+        context.fillRect(x + ((y / 24) % 2) * 8, y + 4, 2, 5);
+      }
+    }
+    context.fillStyle = "#235f43";
+    context.fillRect(0, height - 54, width, 54);
+  } else if (theme === "dungeon") {
+    context.fillStyle = "#111827";
+    context.fillRect(0, 0, width, height);
+    context.strokeStyle = "#263449";
+    context.lineWidth = 1;
+    for (let x = 0; x < width; x += 32) {
+      for (let y = 0; y < height; y += 32) {
+        context.strokeRect(x, y, 32, 32);
+      }
+    }
+  } else {
+    context.fillStyle = "#643c25";
+    context.fillRect(0, 0, width, height);
+    context.fillStyle = "#8a5a36";
+    for (let y = 0; y < height; y += 28) {
+      context.fillRect(0, y, width, 2);
+    }
+    context.fillStyle = "#9a6a40";
+    context.fillRect(0, height - 58, width, 58);
+  }
+}
+
+export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
+  const engine = useMemo(() => {
+    const instance = new BehaviorEngine(640, 360);
+    instance.setAvailableActions(creature.animations.map((animation) => animation.name));
+    return instance;
+  }, [creature.id]);
   const [npcState, setNpcState] = useState(() => engine.getState());
   const [logs, setLogs] = useState(() => engine.getLogs());
   const [isSimulating, setIsSimulating] = useState(true);
-  const [sceneTheme, setSceneTheme] = useState<"grass" | "dungeon" | "town">("grass");
-
+  const [sceneTheme, setSceneTheme] = useState<SceneTheme>("grass");
+  const [forcedAction, setForcedAction] = useState(creature.animations[0]?.name || "");
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imageCacheRef = useRef<Record<string, HTMLImageElement>>({});
+  const imageCacheRef = useRef(new Map<string, HTMLImageElement>());
 
   useEffect(() => {
-    engine.setAvailableActions(creature.animations.map(a => a.name.toLowerCase()));
-  }, [creature, engine]);
+    engine.setAvailableActions(creature.animations.map((animation) => animation.name));
+    setForcedAction(creature.animations[0]?.name || "");
+  }, [creature.animations, engine]);
 
-  // Main simulation loop
+  const publishEngineState = () => {
+    setNpcState(engine.getState());
+    setLogs(engine.getLogs());
+  };
+
   useEffect(() => {
-    let animationFrameId: number;
-    let lastTime = performance.now();
-    
-    // To avoid React state spamming, we might want to throttle the state updates,
-    // but for now let's keep it 60fps to match the original unless it lags.
-    const loop = (currentTime: number) => {
-      if (!isSimulating) return;
-      const dt = (currentTime - lastTime) / 1000;
-      lastTime = currentTime;
+    if (!isSimulating) return;
+    let animationFrame = 0;
+    let previous = performance.now();
+    let lastPublish = previous;
 
-      const updatedState = engine.tick(dt);
-      setNpcState(updatedState);
-      setLogs(engine.getLogs());
-
-      animationFrameId = requestAnimationFrame(loop);
+    const loop = (now: number) => {
+      const deltaSeconds = (now - previous) / 1000;
+      previous = now;
+      engine.tick(deltaSeconds);
+      // Keep simulation smooth but limit React work to 20 updates/second.
+      if (now - lastPublish >= 50) {
+        publishEngineState();
+        lastPublish = now;
+      }
+      animationFrame = requestAnimationFrame(loop);
     };
 
-    if (isSimulating) {
-      animationFrameId = requestAnimationFrame(loop);
-    }
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [isSimulating, engine]);
+    animationFrame = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animationFrame);
+  }, [engine, isSimulating]);
 
-  // Render NPC & Scenery on Canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const width = canvas.width;
-    const height = canvas.height;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.imageSmoothingEnabled = false;
+    drawScene(context, canvas.width, canvas.height, sceneTheme);
 
-    // Draw Background Scene
-    ctx.clearRect(0, 0, width, height);
-    if (sceneTheme === "grass") {
-      ctx.fillStyle = "#15803d";
-      ctx.fillRect(0, 0, width, height);
-      ctx.fillStyle = "#166534";
-      for (let i = 0; i < width; i += 20) {
-        for (let j = 0; j < height; j += 20) {
-          ctx.fillRect(i + ((j * 3) % 10), j, 2, 4);
-        }
+    const visualAction = engine.resolveVisualAction();
+    const animation =
+      creature.animations.find(
+        (candidate) => candidate.name.toLowerCase() === visualAction?.toLowerCase(),
+      ) || creature.animations[0];
+    if (!animation) return;
+
+    const visualDirection = animation.directions === 1 ? 0 : npcState.direction;
+    const frames =
+      animation.framesByDirection[visualDirection] || animation.framesByDirection[0] || [];
+    if (!frames.length) return;
+
+    const totalTicks = frames.reduce(
+      (sum, frame) => sum + Math.max(1, frame.duration || 1),
+      0,
+    );
+    let currentTick = (npcState.stateTimer * 60) % Math.max(1, totalTicks);
+    let frame = frames[0];
+    for (const candidate of frames) {
+      const duration = Math.max(1, candidate.duration || 1);
+      if (currentTick < duration) {
+        frame = candidate;
+        break;
       }
-    } else if (sceneTheme === "dungeon") {
-      ctx.fillStyle = "#1e293b";
-      ctx.fillRect(0, 0, width, height);
-      ctx.strokeStyle = "#334155";
-      ctx.lineWidth = 1;
-      for (let x = 0; x < width; x += 32) ctx.strokeRect(x, 0, 32, height);
-      for (let y = 0; y < height; y += 32) ctx.strokeRect(0, y, width, 32);
+      currentTick -= duration;
+    }
+
+    const scale = 3;
+    const originX = frame.origin?.x ?? animation.frameWidth / 2;
+    const originY = frame.origin?.y ?? animation.frameHeight / 2;
+    const shadowOrigin = frame.shadowOrigin || frame.origin;
+    const shadowX =
+      npcState.x + ((shadowOrigin?.x ?? originX) - originX) * scale;
+    const shadowY =
+      npcState.y + ((shadowOrigin?.y ?? originY) - originY) * scale;
+
+    context.fillStyle = "rgba(0,0,0,0.32)";
+    context.beginPath();
+    context.ellipse(
+      shadowX,
+      shadowY + 2,
+      Math.max(8, creature.shadowSize * 8),
+      Math.max(3, creature.shadowSize * 3),
+      0,
+      0,
+      Math.PI * 2,
+    );
+    context.fill();
+
+    const drawSprite = (image: HTMLImageElement) => {
+      context.imageSmoothingEnabled = false;
+      context.drawImage(
+        image,
+        npcState.x - originX * scale,
+        npcState.y - originY * scale,
+        animation.frameWidth * scale,
+        animation.frameHeight * scale,
+      );
+      context.font = "600 11px system-ui, sans-serif";
+      context.textAlign = "center";
+      context.fillStyle = "rgba(0,0,0,0.65)";
+      context.fillText(
+        creature.displayName,
+        npcState.x + 1,
+        npcState.y - originY * scale - 8 + 1,
+      );
+      context.fillStyle = "#ffffff";
+      context.fillText(
+        creature.displayName,
+        npcState.x,
+        npcState.y - originY * scale - 8,
+      );
+    };
+
+    const cached = imageCacheRef.current.get(frame.dataUrl);
+    if (cached) {
+      drawSprite(cached);
     } else {
-      ctx.fillStyle = "#78350f";
-      ctx.fillRect(0, 0, width, height);
-    }
-
-    // Draw Shadow under NPC
-    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
-    ctx.beginPath();
-    ctx.ellipse(npcState.x, npcState.y + 12, 16, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Find animation frame matching NPC action and direction
-    let animName = npcState.currentAction;
-    if (npcState.currentAction === "idle" || npcState.currentAction === "lookAround" || npcState.currentAction === "happy") {
-      animName = "Idle";
-    }
-    
-    let animObj = creature.animations.find((a) => a.name.toLowerCase() === animName.toLowerCase());
-    if (!animObj) {
-      if (npcState.currentAction === "walk") animObj = creature.animations.find((a) => a.name.toLowerCase() === "walk");
-      if (!animObj) animObj = creature.animations.find((a) => a.name.toLowerCase() === "idle");
-      if (!animObj) animObj = creature.animations[0];
-    }
-
-    const frames = animObj?.framesByDirection?.[npcState.direction] || animObj?.framesByDirection?.[0] || [];
-    
-    // Calculate exact frame based on durations
-    let currentFrameIndex = 0;
-    if (frames.length > 0) {
-      const timerMs = npcState.stateTimer * 1000;
-      let totalAnimTimeMs = 0;
-      for (const f of frames) {
-        totalAnimTimeMs += (f.duration || 6) * 33.3;
-      }
-      if (totalAnimTimeMs > 0) {
-        let currentLoopMs = timerMs % totalAnimTimeMs;
-        for (let i = 0; i < frames.length; i++) {
-          const fDurationMs = (frames[i].duration || 6) * 33.3;
-          if (currentLoopMs < fDurationMs) {
-            currentFrameIndex = i;
-            break;
-          }
-          currentLoopMs -= fDurationMs;
-        }
-      }
-    }
-    const frame = frames[currentFrameIndex] || frames[0];
-
-    if (frame?.dataUrl) {
-      const fw = animObj?.frameWidth || 32;
-      const fh = animObj?.frameHeight || 32;
-      const originX = frame.origin?.x || (fw / 2);
-      const originY = frame.origin?.y || (fh / 2);
-      
-      const drawImage = (img: HTMLImageElement) => {
-        ctx.save();
-        ctx.translate(npcState.x, npcState.y);
-        ctx.drawImage(img, -originX * 2, -originY * 2, fw * 2, fh * 2);
-        ctx.restore();
+      const image = new Image();
+      image.onload = () => {
+        imageCacheRef.current.set(frame.dataUrl, image);
+        // A later state publication redraws the complete scene safely.
       };
-
-      if (imageCacheRef.current[frame.dataUrl]) {
-        drawImage(imageCacheRef.current[frame.dataUrl]);
-      } else {
-        const img = new Image();
-        img.onload = () => {
-          imageCacheRef.current[frame.dataUrl] = img;
-          drawImage(img);
-        };
-        img.src = frame.dataUrl;
-      }
-    } else {
-      ctx.fillStyle = "rgba(255, 0, 0, 0.5)";
-      ctx.fillRect(npcState.x - 8, npcState.y - 8, 16, 16);
-      ctx.fillStyle = "white";
-      ctx.font = "bold 12px Arial";
-      ctx.fillText("?", npcState.x, npcState.y + 4);
+      image.src = frame.dataUrl;
     }
+  }, [creature, engine, npcState, sceneTheme]);
 
-    // Draw Name Tag above NPC
-    ctx.font = "bold 10px sans-serif";
-    ctx.fillStyle = "#ffffff";
-    ctx.textAlign = "center";
-    ctx.fillText(creature.displayName, npcState.x, npcState.y - 24);
-  }, [npcState, creature, sceneTheme]);
+  const runInteraction = (interaction: () => void) => {
+    interaction();
+    publishEngineState();
+  };
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleCanvasClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const clickX = ((e.clientX - rect.left) / rect.width) * canvas.width;
-    const clickY = ((e.clientY - rect.top) / rect.height) * canvas.height;
-    const dx = clickX - npcState.x;
-    const dy = clickY - npcState.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    if (dist < 35) {
-      engine.interactPet();
+    const rectangle = canvas.getBoundingClientRect();
+    const x = ((event.clientX - rectangle.left) / rectangle.width) * canvas.width;
+    const y = ((event.clientY - rectangle.top) / rectangle.height) * canvas.height;
+    if (Math.hypot(x - npcState.x, y - npcState.y) < 48) {
+      runInteraction(() => engine.interactPet());
     }
   };
 
+  const resolvedAction = engine.resolveVisualAction() || "nenhuma";
+
   return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
-      <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
+    <div className="mx-auto max-w-[1400px] space-y-5 p-3 md:p-6">
+      <section className="flex flex-col justify-between gap-4 rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-xl sm:flex-row sm:items-center">
         <div>
-          <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-            <Bot className="w-5 h-5 text-emerald-400" />
-            Laboratório de Comportamento de NPC
+          <h2 className="flex items-center gap-2 text-xl font-bold text-white">
+            <Bot className="h-5 w-5 text-emerald-400" /> Laboratório de comportamento
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Simulador autônomo com máquina de estados, tomadas de decisão, necessidades e reatividade a toque.
+          <p className="mt-1 text-xs text-slate-400">
+            Máquina de estados ligada às animações que realmente existem no personagem.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setIsSimulating(!isSimulating)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg shadow transition cursor-pointer"
-          >
-            {isSimulating ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-            <span>{isSimulating ? "Pausar" : "Simular"}</span>
-          </button>
-        </div>
-      </div>
+        <button
+          type="button"
+          onClick={() => setIsSimulating((value) => !value)}
+          className="flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-500"
+        >
+          {isSimulating ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+          {isSimulating ? "Pausar" : "Continuar"}
+        </button>
+      </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-8 space-y-4">
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 shadow-xl">
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-400">Cenário:</span>
-              <div className="flex items-center gap-1">
-                {(["grass", "dungeon", "town"] as const).map((theme) => (
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <main className="space-y-4">
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-xl">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs text-slate-400">
+                Visual atual: <strong className="text-emerald-300">{resolvedAction}</strong>
+              </span>
+              <div className="flex rounded-lg border border-slate-800 bg-slate-950 p-1">
+                {(["grass", "dungeon", "town"] as SceneTheme[]).map((theme) => (
                   <button
+                    type="button"
                     key={theme}
                     onClick={() => setSceneTheme(theme)}
-                    className={`px-2 py-0.5 rounded capitalize text-[11px] cursor-pointer ${
-                      sceneTheme === theme ? "bg-indigo-600 text-white font-bold" : "text-slate-400 hover:text-slate-200"
+                    className={`rounded-md px-3 py-1 text-[11px] font-semibold ${
+                      sceneTheme === theme
+                        ? "bg-indigo-600 text-white"
+                        : "text-slate-400 hover:text-white"
                     }`}
                   >
                     {theme === "grass" ? "Grama" : theme === "dungeon" ? "Calabouço" : "Praça"}
@@ -222,106 +263,123 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
               </div>
             </div>
 
-            <div className="border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative bg-slate-950 flex justify-center">
+            <div className="overflow-hidden rounded-xl border border-slate-800 bg-slate-950">
               <canvas
                 ref={canvasRef}
                 width={640}
                 height={360}
                 onClick={handleCanvasClick}
-                className="w-full h-auto cursor-pointer max-h-[380px]"
+                className="h-auto w-full cursor-pointer touch-manipulation"
               />
             </div>
+            <p className="mt-2 text-center text-[10px] text-slate-500">
+              Toque no personagem para fazer carinho.
+            </p>
+          </section>
 
-            {/* Interactive Control Palette */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 pt-1">
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <h3 className="mb-3 text-sm font-bold text-white">Interações e teste de ações</h3>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
               <button
-                onClick={() => engine.interactFeed()}
-                className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-                title="Aumenta Fome e Felicidade"
+                type="button"
+                onClick={() => runInteraction(() => engine.interactFeed())}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700"
               >
-                <Apple className="w-3.5 h-3.5 text-rose-400" />
-                <span>Alimentar</span>
+                <Apple className="h-4 w-4 text-rose-400" /> Alimentar
               </button>
               <button
-                onClick={() => engine.interactPet()}
-                className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-                title="Aumenta Felicidade"
+                type="button"
+                onClick={() => runInteraction(() => engine.interactPet())}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700"
               >
-                <Heart className="w-3.5 h-3.5 text-pink-400" />
-                <span>Carinho</span>
+                <Heart className="h-4 w-4 text-pink-400" /> Carinho
               </button>
-              
-              {/* Dynamically list available animations to test */}
-              {creature.animations.map((anim) => (
-                <button
-                  key={anim.id}
-                  onClick={() => engine.forceState(anim.name.toLowerCase())}
-                  className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-                  title={`Testar animação ${anim.name}`}
-                >
-                  <Activity className="w-3.5 h-3.5 text-indigo-400" />
-                  <span className="truncate max-w-[80px]">{anim.name}</span>
-                </button>
+              <button
+                type="button"
+                onClick={() => runInteraction(() => engine.interactAttack())}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700"
+              >
+                <Swords className="h-4 w-4 text-amber-400" /> Ataque
+              </button>
+              <button
+                type="button"
+                onClick={() => runInteraction(() => engine.interactHurt())}
+                className="flex items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700"
+              >
+                <ShieldAlert className="h-4 w-4 text-red-400" /> Dano
+              </button>
+            </div>
+
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <select
+                value={forcedAction}
+                onChange={(event) => setForcedAction(event.target.value)}
+                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white"
+              >
+                {creature.animations.map((animation) => (
+                  <option key={animation.id} value={animation.name}>
+                    {animation.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={!forcedAction}
+                onClick={() =>
+                  runInteraction(() => engine.forceState(forcedAction))
+                }
+                className="flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 disabled:opacity-40"
+              >
+                <Activity className="h-4 w-4" /> Executar animação
+              </button>
+            </div>
+          </section>
+        </main>
+
+        <aside className="space-y-4">
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <h3 className="mb-4 text-sm font-bold text-white">Estado do NPC</h3>
+            <div className="mb-4 rounded-lg border border-slate-800 bg-slate-950 p-3">
+              <span className="block text-[10px] uppercase text-slate-500">Intenção</span>
+              <strong className="font-mono text-sm text-indigo-300">
+                {npcState.currentAction}
+              </strong>
+            </div>
+            <div className="space-y-4">
+              {[
+                { label: "Energia", value: npcState.energy, bar: "bg-amber-500" },
+                { label: "Fome", value: npcState.hunger, bar: "bg-rose-500" },
+                { label: "Felicidade", value: npcState.happiness, bar: "bg-emerald-500" },
+              ].map((metric) => (
+                <div key={metric.label}>
+                  <div className="mb-1 flex justify-between text-xs text-slate-400">
+                    <span>{metric.label}</span>
+                    <span>{Math.round(metric.value)}%</span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full border border-slate-800 bg-slate-950">
+                    <div
+                      className={`h-full transition-[width] ${metric.bar}`}
+                      style={{ width: `${Math.max(0, Math.min(100, metric.value))}%` }}
+                    />
+                  </div>
+                </div>
               ))}
             </div>
-          </div>
-        </div>
+          </section>
 
-        {/* Right Side: State Inspector & Logs */}
-        <div className="lg:col-span-4 space-y-4">
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-4 shadow-lg">
-            <h3 className="text-sm font-bold text-slate-200">Status & Necessidades</h3>
-            <div className="space-y-3 text-xs">
-              <div>
-                <div className="flex justify-between text-slate-400 mb-1">
-                  <span>Ação Atual:</span>
-                  <strong className="text-indigo-400 font-mono capitalize">{npcState.currentAction}</strong>
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-slate-400 mb-1">
-                  <span>Energia:</span>
-                  <strong className="text-slate-200">{Math.round(npcState.energy)}%</strong>
-                </div>
-                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
-                  <div className="bg-amber-500 h-full transition-all" style={{ width: `${npcState.energy}%` }} />
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-slate-400 mb-1">
-                  <span>Fome:</span>
-                  <strong className="text-slate-200">{Math.round(npcState.hunger)}%</strong>
-                </div>
-                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
-                  <div className="bg-rose-500 h-full transition-all" style={{ width: `${npcState.hunger}%` }} />
-                </div>
-              </div>
-              <div>
-                <div className="flex justify-between text-slate-400 mb-1">
-                  <span>Felicidade:</span>
-                  <strong className="text-slate-200">{Math.round(npcState.happiness)}%</strong>
-                </div>
-                <div className="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800">
-                  <div className="bg-emerald-500 h-full transition-all" style={{ width: `${npcState.happiness}%` }} />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Behavior Logs */}
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 shadow-lg">
-            <h3 className="text-sm font-bold text-slate-200">Log de Transição</h3>
-            <div className="bg-slate-950 p-3 rounded-lg h-44 overflow-y-auto space-y-1.5 font-mono text-[10px] border border-slate-800">
-              {logs.map((log, idx) => (
-                <div key={idx} className="text-slate-400 flex items-start gap-1.5">
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <h3 className="mb-3 text-sm font-bold text-white">Log de transições</h3>
+            <div className="h-72 space-y-2 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950 p-3 font-mono text-[10px]">
+              {logs.map((log) => (
+                <div key={log.id} className="grid grid-cols-[54px_80px_1fr] gap-1 text-slate-400">
                   <span className="text-slate-600">{log.timestamp}</span>
-                  <span className="text-indigo-400 font-bold">[{log.action}]</span>
+                  <span className="truncate font-bold text-indigo-400">[{log.action}]</span>
                   <span>{log.message}</span>
                 </div>
               ))}
             </div>
-          </div>
-        </div>
+          </section>
+        </aside>
       </div>
     </div>
   );
