@@ -19,30 +19,48 @@ export interface Point {
 export interface Frame {
   id: string;
   animationId: string;
-  direction: number; // 0 to 7 (South, SW, West, NW, North, NE, East, SE)
+  direction: number;
   frameIndex: number;
-  dataUrl: string; // Base64 or Data URL of the individual frame canvas
-  duration: number; // Duration in ticks/frames
+  dataUrl: string;
+  duration: number;
+  /** Green body-center marker from <Action>-Offsets.png. */
   origin: Point;
+  /** White floor/shadow anchor from <Action>-Shadow.png. */
+  shadowOrigin?: Point;
+  /** Exact per-cell PMD metadata layers, preserved for lossless round-trip. */
+  offsetsDataUrl?: string;
+  shadowDataUrl?: string;
   boundingBox?: BoundingBox;
+}
+
+export interface AnimationSourceAssets {
+  animUrl?: string;
+  offsetsUrl?: string;
+  shadowsUrl?: string;
 }
 
 export interface Animation {
   id: string;
-  name: string; // e.g., "Walk", "Attack", "Idle", "Eat", "Sleep"
+  name: string;
   sourceName: string;
   index: number;
   frameWidth: number;
   frameHeight: number;
-  directions: number; // Typically 8
-  durations: number[]; // Duration for each frame in sequence
+  /** PMD supports either one direction or all eight directions. */
+  directions: number;
+  durations: number[];
   loopMode: "loop" | "once" | "pingpong";
+  /** PMD alias action. Copy actions do not own PNG sheets. */
+  copyOf?: string;
+  locked?: boolean;
   rushFrame?: number;
   hitFrame?: number;
   returnFrame?: number;
-  framesByDirection: Record<number, Frame[]>; // direction index -> Frame[]
+  framesByDirection: Record<number, Frame[]>;
   shadowSize?: number;
-  extraXmlData?: Record<string, any>;
+  sourceAssets?: AnimationSourceAssets;
+  warnings?: string[];
+  extraXmlData?: Record<string, unknown>;
 }
 
 export interface StyleDNA {
@@ -55,13 +73,13 @@ export interface StyleDNA {
 }
 
 export interface NPCState {
-  currentAction: string; // e.g. "idle", "walk", "eat", "sleep", "attack", "happy"
+  currentAction: string;
   x: number;
   y: number;
-  direction: number; // 0 to 7
-  energy: number; // 0 - 100
-  hunger: number; // 0 - 100
-  happiness: number; // 0 - 100
+  direction: number;
+  energy: number;
+  hunger: number;
+  happiness: number;
   targetX?: number;
   targetY?: number;
   isMoving: boolean;
@@ -77,11 +95,11 @@ export interface CreatureVersion {
 }
 
 export interface Creature {
-  id: string; // "spritecollab:0025", "local:uuid", "generated:uuid", "imported:uuid"
+  id: string;
   sourceKind: SourceKind;
   sourceRef?: string;
-  numericId: string; // e.g. "0025"
-  displayName: string; // e.g. "Pikachu (0025)"
+  numericId: string;
+  displayName: string;
   species: string;
   form?: string;
   gender?: string;
@@ -112,7 +130,7 @@ export interface GenerationPlan {
   operation: "recolor" | "edit_frame" | "create_pose" | "new_animation" | "new_creature";
   prompt: string;
   styleNotes: string;
-  matteColor: string; // e.g. "#FF00FF" (Magenta) or "#00FF00" (Lime)
+  matteColor: string;
   expectedFrameCount: number;
   frameWidth: number;
   frameHeight: number;
@@ -139,7 +157,26 @@ export interface SpriteCollabIndexItem {
   numericId: string;
   name: string;
   path: string;
+  formPath?: string;
   hasAnimData: boolean;
   hasPortraits: boolean;
+  portraitUrl?: string;
+  animDataUrl?: string;
+  zipUrl?: string;
+  phase?: string;
+  phaseRaw?: number;
+  canon?: boolean;
+  shiny?: boolean;
+  female?: boolean;
   lastUpdated?: string;
+}
+
+export interface SpriteCollabActionAsset {
+  kind: "sprite" | "copy";
+  action: string;
+  locked: boolean;
+  copyOf?: string;
+  animUrl?: string;
+  offsetsUrl?: string;
+  shadowsUrl?: string;
 }
