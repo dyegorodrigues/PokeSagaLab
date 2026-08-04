@@ -1,169 +1,223 @@
-import JSZip from "jszip";
-import { Creature, Animation, Frame } from "../types";
-import { parseAnimDataXml, sliceSpriteSheet } from "../domain/parser/animDataParser";
+import JSZip, { JSZipObject } from "jszip";
+import { Animation, Creature, Frame } from "../types";
+import {
+  ParsedAnimationDefinition,
+  parseAnimDataXml,
+  sliceSpriteSheet,
+} from "../domain/parser/animDataParser";
 import { LocalStore } from "../stores/localStore";
 
-export async function importCreatureFromZip(file: File): Promise<Creature> {
-  const zip = await JSZip.loadAsync(file);
+interface ImportManifest {
+  displayName?: string;
+  numericId?: string;
+  license?: string;
+  provenance?: {
+    author?: string;
+  };
+}
 
-  // 1. Locate AnimData.xml
-  const animDataFile = zip.file("AnimData.xml") || zip.file(/AnimData\.xml$/i)[0];
+function basename(path: string): string {
+  return path.replace(/\\/g, "/").split("/").filter(Boolean).pop() || "";
+}
+
+function findFileByBasename(zip: JSZip, expectedName: string): JSZipObject | null {
+  const expected = expectedName.toLowerCase();
+  return (
+    Object.values(zip.files).find(
+      (entry) => !entry.dir && basename(entry.name).toLowerCase() === expected,
+    ) || null
+  );
+}
+
+async function loadZipPng(file: JSZipObject, label: string): Promise<HTMLImageElement> {
+  const base64 = await file.async("base64");
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error(`Não foi possível decodificar ${label}.`));
+    image.src = `data:image/png;base64,${base64}`;
+  });
+  return image;
+}
+
+function cloneFramesForAlias(
+  framesByDirection: Record<number, Frame[]>,
+  animationId: string,
+): Record<number, Frame[]> {
+  return Object.fromEntries(
+    Object.entries(framesByDirection).map(([direction, frames]) => [
+      Number(direction),
+      frames.map((frame, frameIndex) => ({
+        ...frame,
+        id: `${animationId}_d${direction}_f${frameIndex}`,
+        animationId,
+        direction: Number(direction),
+        frameIndex,
+        origin: { ...frame.origin },
+        shadowOrigin: frame.shadowOrigin ? { ...frame.shadowOrigin } : undefined,
+        boundingBox: frame.boundingBox ? { ...frame.boundingBox } : undefined,
+      })),
+    ]),
+  );
+}
+
+function createAnimationShell(
+  creatureId: string,
+  definition: ParsedAnimationDefinition,
+): Omit<Animation, "framesByDirection" | "directions"> {
+  return {
+    id: `${creatureId}_${definition.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`,
+    name: definition.name,
+    sourceName: definition.name,
+    index: definition.index,
+    frameWidth: definition.frameWidth,
+    frameHeight: definition.frameHeight,
+    durations: [...definition.durations],
+    loopMode: "loop",
+    copyOf: definition.copyOf,
+    rushFrame: definition.rushFrame,
+    hitFrame: definition.hitFrame,
+    returnFrame: definition.returnFrame,
+    extraXmlData: definition.extra,
+  };
+}
+
+export async function importCreatureFromZip(file: File): Promise<Creature> {
+  const zip = await JSZip.loadAsync(file, {
+    createFolders: false,
+    checkCRC32: true,
+  });
+
+  const animDataFile = findFileByBasename(zip, "AnimData.xml");
   if (!animDataFile) {
-    throw new Error("Pacote ZIP inválido: 'AnimData.xml' não encontrado no arquivo.");
+    throw new Error("Pacote PMD inválido: 'AnimData.xml' não foi encontrado.");
   }
 
   const xmlText = await animDataFile.async("string");
   const parsed = parseAnimDataXml(xmlText);
 
-  // 2. Read optional manifest.json
-  let manifest: any = {};
-  const manifestFile = zip.file("manifest.json");
+  let manifest: ImportManifest = {};
+  const manifestFile = findFileByBasename(zip, "manifest.json");
   if (manifestFile) {
     try {
-      manifest = JSON.parse(await manifestFile.async("string"));
-    } catch {
-      // Ignore invalid manifest
+      manifest = JSON.parse(await manifestFile.async("string")) as ImportManifest;
+    } catch (error) {
+      throw new Error(
+        `manifest.json inválido: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
-  const creatureId = `imported:${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const creatureId = `imported:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const now = Date.now();
+  const animationsByName = new Map<string, Animation>();
 
-  const animations: Animation[] = [];
-
-  // 3. Process each animation listed in AnimData.xml
-  for (const animDef of parsed.anims) {
-    const animName = animDef.name;
-    const animId = `${creatureId}_${animName.toLowerCase()}`;
-
-    // Look for image file (e.g., Walk-Anim.png or Walk.png)
-    const imageFile =
-      zip.file(`${animName}-Anim.png`) ||
-      zip.file(`${animName}.png`) ||
-      zip.file(new RegExp(`${animName}.*\\.png$`, "i"))[0];
-
-    const offsetsFile = 
-      zip.file(`${animName}-Offsets.png`) ||
-      zip.file(new RegExp(`/${animName}-Offsets\\.png$`, "i"))[0] ||
-      zip.file(new RegExp(`^${animName}-Offsets\\.png$`, "i"))[0];
-
-    let framesByDir: Record<number, Frame[]> = {};
-
-    if (imageFile) {
-      const base64Img = await imageFile.async("base64");
-      const imgDataUrl = `data:image/png;base64,${base64Img}`;
-
-      // Load image into memory to slice
-      const img = new Image();
-      await new Promise((resolve) => {
-        img.onload = resolve;
-        img.src = imgDataUrl;
-      });
-
-      let offImg = undefined;
-      if (offsetsFile) {
-        const offBase64 = await offsetsFile.async("base64");
-        offImg = new Image();
-        await new Promise((resolve) => {
-          offImg.onload = resolve;
-          offImg.src = `data:image/png;base64,${offBase64}`;
-        });
-      }
-
-      framesByDir = await sliceSpriteSheet(
-        img,
-        animDef.frameWidth,
-        animDef.frameHeight,
-        animDef.durations,
-        animName,
-        animId,
-        8,
-        offImg
+  // Real actions own three aligned sheets: Anim, Offsets and Shadow.
+  for (const definition of parsed.anims.filter((animation) => !animation.copyOf)) {
+    const shell = createAnimationShell(creatureId, definition);
+    const animFile = findFileByBasename(zip, `${definition.name}-Anim.png`);
+    if (!animFile) {
+      throw new Error(
+        `Pacote incompleto: '${definition.name}-Anim.png' não foi encontrado para a animação '${definition.name}'.`,
       );
-    } else {
-      // Fallback empty frames if PNG missing
-      framesByDir = createFallbackFrames(animId, animDef.frameWidth, animDef.frameHeight, animDef.durations);
     }
 
-    animations.push({
-      id: animId,
-      name: animName,
-      sourceName: animName,
-      index: animDef.index,
-      frameWidth: animDef.frameWidth,
-      frameHeight: animDef.frameHeight,
-      directions: 8,
-      durations: animDef.durations,
-      loopMode: "loop",
-      rushFrame: animDef.rushFrame,
-      hitFrame: animDef.hitFrame,
-      returnFrame: animDef.returnFrame,
-      framesByDirection: framesByDir,
+    const offsetsFile = findFileByBasename(zip, `${definition.name}-Offsets.png`);
+    const shadowFile =
+      findFileByBasename(zip, `${definition.name}-Shadow.png`) ||
+      findFileByBasename(zip, `${definition.name}-Shadows.png`);
+
+    const [animImage, offsetsImage, shadowImage] = await Promise.all([
+      loadZipPng(animFile, `${definition.name}-Anim.png`),
+      offsetsFile
+        ? loadZipPng(offsetsFile, `${definition.name}-Offsets.png`)
+        : Promise.resolve(undefined),
+      shadowFile
+        ? loadZipPng(shadowFile, `${definition.name}-Shadow.png`)
+        : Promise.resolve(undefined),
+    ]);
+
+    const sliced = await sliceSpriteSheet(
+      animImage,
+      definition.frameWidth,
+      definition.frameHeight,
+      definition.durations,
+      definition.name,
+      shell.id,
+      {
+        offsetsSource: offsetsImage,
+        shadowsSource: shadowImage,
+      },
+    );
+
+    animationsByName.set(definition.name, {
+      ...shell,
+      directions: sliced.directions,
+      framesByDirection: sliced.framesByDirection,
+      warnings: [...parsed.warnings, ...sliced.warnings],
     });
   }
 
-  const displayName = manifest.displayName || file.name.replace(/\.zip$/i, "");
-  const numericId = manifest.numericId || "Custom";
+  // CopyOf actions reuse another action's cells but retain their own PMD identity.
+  for (const definition of parsed.anims.filter((animation) => animation.copyOf)) {
+    const shell = createAnimationShell(creatureId, definition);
+    const source = animationsByName.get(definition.copyOf!);
+    if (!source) {
+      throw new Error(
+        `A animação '${definition.name}' referencia CopyOf '${definition.copyOf}', mas a origem não foi carregada.`,
+      );
+    }
+    animationsByName.set(definition.name, {
+      ...shell,
+      frameWidth: source.frameWidth,
+      frameHeight: source.frameHeight,
+      durations: [...source.durations],
+      directions: source.directions,
+      framesByDirection: cloneFramesForAlias(source.framesByDirection, shell.id),
+      warnings: [`Ação PMD reutilizada de '${definition.copyOf}' via CopyOf.`],
+    });
+  }
+
+  const animations = parsed.anims.map((definition) => {
+    const animation = animationsByName.get(definition.name);
+    if (!animation) {
+      throw new Error(`Falha interna ao materializar a animação '${definition.name}'.`);
+    }
+    return animation;
+  });
+
+  const rawDisplayName = manifest.displayName || file.name.replace(/\.zip$/i, "");
+  const displayName = rawDisplayName.trim() || "Criatura importada";
+  const numericId = manifest.numericId?.trim() || "Custom";
+  const versionId = `v1_${now}`;
 
   const importedCreature: Creature = {
     id: creatureId,
     sourceKind: "imported",
+    sourceRef: file.name,
     numericId,
     displayName: `${displayName} (Importado)`,
     species: displayName,
     shadowSize: parsed.shadowSize,
     animations,
-    license: manifest.license || "Importado via ZIP",
+    license: manifest.license || "Licença não informada no pacote importado",
     provenance: {
       origin: file.name,
-      author: manifest.provenance?.author || "Importado pelo Usuário",
+      author: manifest.provenance?.author || "Importado pelo usuário",
       createdAt: now,
       updatedAt: now,
     },
     versions: [
       {
-        versionId: `v1_${now}`,
+        versionId,
         timestamp: now,
-        description: "Importação via pacote ZIP",
+        description: "Importação PMD preservando Anim, Offsets, Shadow e CopyOf",
         author: "Usuário",
       },
     ],
-    currentVersionId: `v1_${now}`,
+    currentVersionId: versionId,
   };
 
-  // Save to LocalStore IndexedDB so it appears instantly in library
   await LocalStore.saveCreature(importedCreature);
-
   return importedCreature;
-}
-
-function createFallbackFrames(
-  animId: string,
-  width: number,
-  height: number,
-  durations: number[]
-): Record<number, Frame[]> {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.fillStyle = "#ff00ff";
-    ctx.fillRect(4, 4, width - 8, height - 8);
-  }
-  const fallbackUrl = canvas.toDataURL("image/png");
-
-  const framesByDir: Record<number, Frame[]> = {};
-  for (let d = 0; d < 8; d++) {
-    framesByDir[d] = durations.map((dur, f) => ({
-      id: `${animId}_d${d}_f${f}`,
-      animationId: animId,
-      direction: d,
-      frameIndex: f,
-      dataUrl: fallbackUrl,
-      duration: dur,
-      origin: { x: Math.floor(width / 2), y: Math.floor(height / 2) },
-    }));
-  }
-  return framesByDir;
 }
