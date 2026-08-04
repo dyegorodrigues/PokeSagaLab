@@ -10,6 +10,7 @@
     "clean": "rm -rf dist server.cjs",
     "lint": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
+    "test:integration": "tsx --test tests/*.integration.test.ts",
     "check": "npm run lint && npm test && npm run build"
   },
   "dependencies": {
