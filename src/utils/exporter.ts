@@ -1,53 +1,134 @@
 import JSZip from "jszip";
-import { Creature } from "../types";
-import { assembleSpriteSheet } from "../domain/parser/animDataParser";
+import { Animation, Creature } from "../types";
+import {
+  SpriteSheetLayer,
+  assembleSpriteSheet,
+} from "../domain/parser/animDataParser";
 
+function escapeXml(value: unknown): string {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function appendOptionalNumber(lines: string[], tag: string, value?: number) {
+  if (value !== undefined && Number.isFinite(value)) {
+    lines.push(`      <${tag}>${value}</${tag}>`);
+  }
+}
+
+function buildAnimDataXml(creature: Creature): string {
+  const lines = [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    "<AnimData>",
+    `  <ShadowSize>${Number.isFinite(creature.shadowSize) ? creature.shadowSize : 1}</ShadowSize>`,
+    "  <Anims>",
+  ];
+
+  for (const animation of creature.animations) {
+    lines.push("    <Anim>");
+    lines.push(`      <Name>${escapeXml(animation.name)}</Name>`);
+    if (Number.isFinite(animation.index) && animation.index >= 0) {
+      lines.push(`      <Index>${animation.index}</Index>`);
+    }
+
+    if (animation.copyOf) {
+      lines.push(`      <CopyOf>${escapeXml(animation.copyOf)}</CopyOf>`);
+    } else {
+      if (!animation.durations.length) {
+        throw new Error(`A animação '${animation.name}' não possui durações.`);
+      }
+      lines.push(`      <FrameWidth>${animation.frameWidth}</FrameWidth>`);
+      lines.push(`      <FrameHeight>${animation.frameHeight}</FrameHeight>`);
+      appendOptionalNumber(lines, "RushFrame", animation.rushFrame);
+      appendOptionalNumber(lines, "HitFrame", animation.hitFrame);
+      appendOptionalNumber(lines, "ReturnFrame", animation.returnFrame);
+      lines.push("      <Durations>");
+      for (const duration of animation.durations) {
+        if (!Number.isInteger(duration) || duration <= 0) {
+          throw new Error(
+            `A animação '${animation.name}' possui duração inválida: ${duration}.`,
+          );
+        }
+        lines.push(`        <Duration>${duration}</Duration>`);
+      }
+      lines.push("      </Durations>");
+    }
+    lines.push("    </Anim>");
+  }
+
+  lines.push("  </Anims>", "</AnimData>", "");
+  return lines.join("\n");
+}
+
+function pngBase64(dataUrl: string, label: string): string {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl);
+  if (!match) throw new Error(`${label} não foi gerado como PNG base64 válido.`);
+  return match[1];
+}
+
+async function addAnimationLayer(
+  zip: JSZip,
+  animation: Animation,
+  layer: SpriteSheetLayer,
+  filename: string,
+) {
+  const dataUrl = await assembleSpriteSheet(
+    animation.framesByDirection,
+    animation.frameWidth,
+    animation.frameHeight,
+    animation.directions,
+    layer,
+  );
+  zip.file(filename, pngBase64(dataUrl, filename), { base64: true });
+}
+
+/** Exports a PMD/SpriteBot-compatible, round-trip-safe ZIP package. */
 export async function exportCreatureToZip(creature: Creature): Promise<Blob> {
+  if (!creature.animations.length) {
+    throw new Error("O personagem não possui animações para exportar.");
+  }
+
   const zip = new JSZip();
+  zip.file("AnimData.xml", buildAnimDataXml(creature));
 
-  // 1. Generate AnimData.xml
-  let xmlContent = `<?xml version="1.0" encoding="utf-8"?>\n<AnimData>\n`;
-  xmlContent += `  <ShadowSize>${creature.shadowSize ?? 1}</ShadowSize>\n`;
-  xmlContent += `  <Anims>\n`;
-
-  for (const anim of creature.animations) {
-    xmlContent += `    <Anim>\n`;
-    xmlContent += `      <Name>${anim.name}</Name>\n`;
-    xmlContent += `      <Index>${anim.index}</Index>\n`;
-    xmlContent += `      <FrameWidth>${anim.frameWidth}</FrameWidth>\n`;
-    xmlContent += `      <FrameHeight>${anim.frameHeight}</FrameHeight>\n`;
-    xmlContent += `      <Durations>\n`;
-    for (const d of anim.durations) {
-      xmlContent += `        <Duration>${d}</Duration>\n`;
+  for (const animation of creature.animations) {
+    // CopyOf actions must not own duplicated sheets in the PMD format.
+    if (animation.copyOf) continue;
+    if (animation.directions !== 1 && animation.directions !== 8) {
+      throw new Error(
+        `A animação '${animation.name}' possui ${animation.directions} direções; esperado 1 ou 8.`,
+      );
     }
-    xmlContent += `      </Durations>\n`;
-    if (anim.rushFrame !== undefined) xmlContent += `      <RushFrame>${anim.rushFrame}</RushFrame>\n`;
-    if (anim.hitFrame !== undefined) xmlContent += `      <HitFrame>${anim.hitFrame}</HitFrame>\n`;
-    if (anim.returnFrame !== undefined) xmlContent += `      <ReturnFrame>${anim.returnFrame}</ReturnFrame>\n`;
-    xmlContent += `    </Anim>\n`;
+
+    await Promise.all([
+      addAnimationLayer(
+        zip,
+        animation,
+        "sprite",
+        `${animation.name}-Anim.png`,
+      ),
+      addAnimationLayer(
+        zip,
+        animation,
+        "offsets",
+        `${animation.name}-Offsets.png`,
+      ),
+      addAnimationLayer(
+        zip,
+        animation,
+        "shadow",
+        `${animation.name}-Shadow.png`,
+      ),
+    ]);
   }
 
-  xmlContent += `  </Anims>\n</AnimData>`;
-
-  zip.file("AnimData.xml", xmlContent);
-
-  // 2. Generate PNG Spritesheets for each animation
-  for (const anim of creature.animations) {
-    const sheetDataUrl = await assembleSpriteSheet(
-      anim.framesByDirection,
-      anim.frameWidth,
-      anim.frameHeight,
-      anim.directions || 8
-    );
-
-    if (sheetDataUrl) {
-      const base64Data = sheetDataUrl.replace(/^data:image\/png;base64,/, "");
-      zip.file(`${anim.name}-Anim.png`, base64Data, { base64: true });
-    }
-  }
-
-  // 3. Add manifest.json and License
   const manifest = {
+    schemaVersion: 2,
+    format: "PMD-SpriteBot",
     id: creature.id,
     displayName: creature.displayName,
     numericId: creature.numericId,
@@ -55,103 +136,128 @@ export async function exportCreatureToZip(creature: Creature): Promise<Blob> {
     shadowSize: creature.shadowSize,
     license: creature.license,
     provenance: creature.provenance,
+    animations: creature.animations.map((animation) => ({
+      name: animation.name,
+      index: animation.index,
+      copyOf: animation.copyOf,
+      directions: animation.directions,
+      frameWidth: animation.frameWidth,
+      frameHeight: animation.frameHeight,
+      frameCount: animation.durations.length,
+    })),
     exportedAt: new Date().toISOString(),
   };
 
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
   zip.file(
     "CREDITS_LICENSE.txt",
-    `SAGA SpriteLab AI Export Package\n` +
-      `Personagem: ${creature.displayName}\n` +
-      `ID numérico: ${creature.numericId}\n` +
-      `Origem: ${creature.provenance.origin}\n` +
-      `Autor: ${creature.provenance.author}\n` +
-      `Licença: ${creature.license}\n` +
-      `Data de Exportação: ${new Date().toLocaleString("pt-BR")}\n`
+    [
+      "SAGA SpriteLab AI — PMD Export Package",
+      `Personagem: ${creature.displayName}`,
+      `ID numérico: ${creature.numericId}`,
+      `Origem: ${creature.provenance.origin}`,
+      `Autor/créditos: ${creature.provenance.author}`,
+      `Licença informada: ${creature.license}`,
+      `Data de exportação: ${new Date().toISOString()}`,
+      "",
+      "Os direitos sobre personagens e contribuições permanecem com seus respectivos titulares.",
+    ].join("\n"),
   );
 
-  return zip.generateAsync({ type: "blob" });
+  return zip.generateAsync({
+    type: "blob",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
 }
 
 export function downloadBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function loadImage(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Não foi possível carregar um frame do firmware."));
+    image.src = dataUrl;
+  });
+}
 
-// PMDSpriteManager inspired Firmware Exporter
-export async function exportFirmwareOverworld(creature: Creature): Promise<Blob | null> {
-  const walkAnim = creature.animations.find(a => a.name.toLowerCase() === "walk");
-  const idleAnim = creature.animations.find(a => a.name.toLowerCase() === "idle");
-  const sleepAnim = creature.animations.find(a => a.name.toLowerCase() === "sleep");
+// Compact four-direction atlas used by the SAGA overworld prototype.
+export async function exportFirmwareOverworld(creature: Creature): Promise<Blob> {
+  const findAction = (name: string) =>
+    creature.animations.find(
+      (animation) => animation.name.toLowerCase() === name.toLowerCase(),
+    );
+  const walkAnimation = findAction("Walk");
+  const idleAnimation = findAction("Idle");
+  const sleepAnimation = findAction("Sleep");
+  const available = [walkAnimation, idleAnimation, sleepAnimation].filter(
+    (animation): animation is Animation => Boolean(animation),
+  );
 
-  if (!walkAnim && !idleAnim && !sleepAnim) {
-    throw new Error("Pelo menos uma animação (Walk, Idle ou Sleep) é necessária para exportar firmware.");
+  if (!available.length) {
+    throw new Error(
+      "Pelo menos uma animação Walk, Idle ou Sleep é necessária para o firmware.",
+    );
   }
 
-  const walkN = walkAnim ? walkAnim.durations.length : 0;
-  const idleN = idleAnim ? idleAnim.durations.length : 0;
-  const sleepN = sleepAnim ? sleepAnim.durations.length : 0;
-  const N = Math.max(walkN, idleN, sleepN, 1);
-
-  let maxWidth = 0;
-  let maxHeight = 0;
-  for (const anim of [walkAnim, idleAnim, sleepAnim]) {
-    if (anim) {
-      if (anim.frameWidth > maxWidth) maxWidth = anim.frameWidth;
-      if (anim.frameHeight > maxHeight) maxHeight = anim.frameHeight;
-    }
-  }
-
+  const outputFrameCount = Math.max(
+    ...available.map((animation) => animation.durations.length),
+  );
+  const maxWidth = Math.max(...available.map((animation) => animation.frameWidth));
+  const maxHeight = Math.max(...available.map((animation) => animation.frameHeight));
   const canvas = document.createElement("canvas");
-  canvas.width = maxWidth * N;
+  canvas.width = maxWidth * outputFrameCount;
   canvas.height = maxHeight * 9;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("Não foi possível criar o canvas do firmware.");
 
-  const SC_TO_FW_DIRS = [0, 2, 6, 4]; // S(0), W(2), E(6), N(4)
+  // Official row order used by this app: S, SE, E, NE, N, NW, W, SW.
+  const fourDirections = [0, 6, 2, 4]; // S, W, E, N.
 
-  const drawRow = async (anim: Animation | undefined, fwRowStart: number, frameCount: number, directions: number[]) => {
-    if (!anim) return;
-    for (let i = 0; i < directions.length; i++) {
-      const fwRow = fwRowStart + i;
-      const scDir = directions[i];
-      const frames = anim.framesByDirection[scDir] || anim.framesByDirection[0] || [];
-      
-      for (let f = 0; f < frameCount; f++) {
-        const frameIndex = f < frames.length ? f : f % frames.length;
-        const frame = frames[frameIndex];
-        if (frame && frame.dataUrl) {
-          const img = new Image();
-          await new Promise((resolve) => {
-            img.onload = resolve;
-            img.onerror = resolve;
-            img.src = frame.dataUrl;
-          });
-          const dx = (maxWidth - anim.frameWidth) / 2;
-          const dy = (maxHeight - anim.frameHeight) / 2;
-          ctx.drawImage(img, f * maxWidth + dx, fwRow * maxHeight + dy);
-        }
+  const drawRows = async (
+    animation: Animation | undefined,
+    outputRowStart: number,
+    directions: number[],
+  ) => {
+    if (!animation) return;
+    for (let rowOffset = 0; rowOffset < directions.length; rowOffset += 1) {
+      const requestedDirection = animation.directions === 1 ? 0 : directions[rowOffset];
+      const frames = animation.framesByDirection[requestedDirection];
+      if (!frames?.length) {
+        throw new Error(
+          `A animação '${animation.name}' não possui frames na direção ${requestedDirection}.`,
+        );
+      }
+      for (let outputFrame = 0; outputFrame < outputFrameCount; outputFrame += 1) {
+        const frame = frames[outputFrame % frames.length];
+        const image = await loadImage(frame.dataUrl);
+        const x = outputFrame * maxWidth + (maxWidth - animation.frameWidth) / 2;
+        const y =
+          (outputRowStart + rowOffset) * maxHeight +
+          (maxHeight - animation.frameHeight) / 2;
+        context.drawImage(image, x, y, animation.frameWidth, animation.frameHeight);
       }
     }
   };
 
-  // Walk: rows 0-3
-  await drawRow(walkAnim, 0, walkN, SC_TO_FW_DIRS);
-  // Idle: rows 4-7
-  await drawRow(idleAnim, 4, idleN, SC_TO_FW_DIRS);
-  // Sleep: row 8
-  await drawRow(sleepAnim, 8, sleepN, [0]);
+  await drawRows(walkAnimation, 0, fourDirections);
+  await drawRows(idleAnimation, 4, fourDirections);
+  await drawRows(sleepAnimation, 8, [0]);
 
-  return new Promise((resolve) => {
+  return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((blob) => {
-      resolve(blob);
+      if (blob) resolve(blob);
+      else reject(new Error("Falha ao codificar o atlas do firmware em PNG."));
     }, "image/png");
   });
 }
