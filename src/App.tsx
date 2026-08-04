@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { Header, TabType } from "./components/Header";
 import { UnifiedLibrary } from "./components/UnifiedLibrary";
 import { AnimationStudio } from "./components/AnimationStudio";
@@ -7,10 +7,110 @@ import { AiStudioLab } from "./components/AiStudioLab";
 import { BehaviorLab } from "./components/BehaviorLab";
 import { ImportExportModal } from "./components/ImportExportModal";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
-
-import { Creature, SpriteCollabIndexItem } from "./types";
-import { parseAnimDataXml, sliceSpriteSheet } from "./domain/parser/animDataParser";
+import {
+  Animation,
+  Creature,
+  Frame,
+  SpriteCollabActionAsset,
+  SpriteCollabIndexItem,
+} from "./types";
+import {
+  ParsedAnimationDefinition,
+  parseAnimDataXml,
+  sliceSpriteSheet,
+} from "./domain/parser/animDataParser";
 import { LocalStore } from "./stores/localStore";
+
+interface RemoteCharacterPayload {
+  id: string;
+  numericId: string;
+  displayName: string;
+  path: string;
+  formPath: string;
+  animDataXml: string;
+  animDataUrl: string;
+  zipUrl?: string;
+  portraitUrl?: string;
+  phase: string;
+  phaseRaw: number;
+  actions: SpriteCollabActionAsset[];
+  credits: Array<{ id: string; name?: string; contact?: string }>;
+  license: string;
+  sourceCommit?: string;
+  sourceUpdatedAt?: string;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function assetProxyUrl(url: string): string {
+  return `/api/spritecollab/asset?url=${encodeURIComponent(url)}`;
+}
+
+function loadAssetImage(url: string, label: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error(`Falha ao carregar ${label}.`));
+    image.src = assetProxyUrl(url);
+  });
+}
+
+function cloneAliasFrames(
+  framesByDirection: Record<number, Frame[]>,
+  animationId: string,
+): Record<number, Frame[]> {
+  return Object.fromEntries(
+    Object.entries(framesByDirection).map(([direction, frames]) => [
+      Number(direction),
+      frames.map((frame, frameIndex) => ({
+        ...frame,
+        id: `${animationId}_d${direction}_f${frameIndex}`,
+        animationId,
+        direction: Number(direction),
+        frameIndex,
+        origin: { ...frame.origin },
+        shadowOrigin: frame.shadowOrigin ? { ...frame.shadowOrigin } : undefined,
+        boundingBox: frame.boundingBox ? { ...frame.boundingBox } : undefined,
+      })),
+    ]),
+  );
+}
+
+function animationId(creaturePath: string, animationName: string): string {
+  return `remote_${creaturePath.replace(/\//g, "_")}_${animationName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")}`;
+}
+
+function animationBase(
+  creaturePath: string,
+  definition: ParsedAnimationDefinition,
+): Omit<Animation, "directions" | "framesByDirection"> {
+  return {
+    id: animationId(creaturePath, definition.name),
+    name: definition.name,
+    sourceName: definition.name,
+    index: definition.index,
+    frameWidth: definition.frameWidth,
+    frameHeight: definition.frameHeight,
+    durations: [...definition.durations],
+    loopMode: "loop",
+    copyOf: definition.copyOf,
+    rushFrame: definition.rushFrame,
+    hitFrame: definition.hitFrame,
+    returnFrame: definition.returnFrame,
+    extraXmlData: definition.extra,
+  };
+}
+
+function blankFrameDataUrl(width: number, height: number): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas.toDataURL("image/png");
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabType>("library");
@@ -19,221 +119,219 @@ export default function App() {
   const [activeCreature, setActiveCreature] = useState<Creature | null>(null);
   const [history, setHistory] = useState<Creature[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-
   const [isLoading, setIsLoading] = useState(false);
+  const [appError, setAppError] = useState<string | null>(null);
 
-  // Editor Target Parameters
   const [editorParams, setEditorParams] = useState<{
     animationId: string;
     frameIndex: number;
     direction: number;
   }>({ animationId: "", frameIndex: 0, direction: 0 });
 
-  // Initial Sync & Load Local Database
   useEffect(() => {
-    loadLocalDatabase();
-    syncRemoteIndex();
+    void loadLocalDatabase();
+    void syncRemoteIndex();
+    // Initial bootstrap only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleSetActiveCreature = (creature: Creature | null) => {
+    if (activeCreature?.id === creature?.id) {
+      setActiveCreature(creature);
+      return;
+    }
+    setActiveCreature(creature);
+    if (creature) {
+      setHistory([creature]);
+      setHistoryIndex(0);
+    } else {
+      setHistory([]);
+      setHistoryIndex(-1);
+    }
+  };
 
   const loadLocalDatabase = async (preventAutoSelect = false) => {
     try {
       const stored = await LocalStore.getAllLocalCreatures();
       setLocalCreatures(stored);
-
-      // Default active creature if none selected, OR if the active creature is no longer in the DB (was deleted)
-      // BUT only if we aren't explicitly preventing auto-select.
       if (!preventAutoSelect && stored.length > 0) {
-        let toSelect: Creature | null = null;
-        if (!activeCreature) {
-          toSelect = stored[0];
-        } else {
-          const stillExists = stored.some((c) => c.id === activeCreature.id);
-          if (!stillExists) toSelect = stored[0];
-        }
-        if (toSelect) {
-          handleSetActiveCreature(toSelect);
-        }
+        const stillExists = activeCreature
+          ? stored.some((creature) => creature.id === activeCreature.id)
+          : false;
+        if (!activeCreature || !stillExists) handleSetActiveCreature(stored[0]);
       }
-    } catch (err) {
-      console.error("Failed to load local DB:", err);
+    } catch (error) {
+      const message = `Falha ao abrir o banco local: ${errorMessage(error)}`;
+      console.error(message);
+      setAppError(message);
     }
   };
 
-  const syncRemoteIndex = async () => {
+  const syncRemoteIndex = async (forceRefresh = false) => {
     setIsLoading(true);
+    setAppError(null);
     try {
-      const res = await fetch("/api/spritecollab/index");
-      const data = await res.json();
-      if (data.items) {
-        setRemoteIndex(data.items);
+      const response = await fetch(
+        `/api/spritecollab/index${forceRefresh ? "?refresh=1" : ""}`,
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || `HTTP ${response.status}`);
       }
-    } catch (err) {
-      console.error("Failed to sync remote index:", err);
+      if (!Array.isArray(payload.items)) {
+        throw new Error("O servidor retornou um índice SpriteCollab inválido.");
+      }
+      setRemoteIndex(payload.items as SpriteCollabIndexItem[]);
+    } catch (error) {
+      const message = `Sincronização SpriteCollab falhou: ${errorMessage(error)}`;
+      console.error(message);
+      setAppError(message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  /**
-   * Fetches remote character details (AnimData.xml + PNG sheets),
-   * parses XML, slices frames, and converts into Creature model.
-   */
-  const loadRemoteCharacter = async (id: string): Promise<Creature> => {
+  const loadRemoteCharacter = async (path: string): Promise<Creature> => {
     setIsLoading(true);
+    setAppError(null);
     try {
-      const res = await fetch(`/api/spritecollab/character/${id}`);
-      const data = await res.json();
-
-      const parsedXml = parseAnimDataXml(data.animDataXml);
-
-      // Helper to load image async
-      const loadImage = (src: string): Promise<HTMLImageElement | null> => {
-        return new Promise((resolve) => {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => resolve(img);
-          img.onerror = () => resolve(null);
-          img.src = src;
-        });
-      };
-
-      const animations = await Promise.all(
-        parsedXml.anims.map(async (animDef) => {
-          const animId = `remote_${id}_${animDef.name.toLowerCase()}`;
-          const sheetUrl = `/api/spritecollab/raw/sprite/${id}/${animDef.name}-Anim.png`;
-          const offsetUrl = `/api/spritecollab/raw/sprite/${id}/${animDef.name}-Offsets.png`;
-          
-          const [loadedImg, loadedOffsets] = await Promise.all([
-            loadImage(sheetUrl),
-            loadImage(offsetUrl)
-          ]);
-
-          let framesByDir: Record<number, any[]> = {};
-
-          if (loadedImg && loadedImg.naturalWidth > 0 && loadedImg.naturalHeight > 0) {
-            try {
-              framesByDir = await sliceSpriteSheet(
-                loadedImg,
-                animDef.frameWidth,
-                animDef.frameHeight,
-                animDef.durations,
-                animDef.name,
-                animId,
-                8,
-                loadedOffsets || undefined
-              );
-            } catch (err) {
-              console.warn(`Error slicing sheet for ${animDef.name}:`, err);
-            }
-          }
-
-          // Fallback if sheet not available or slice empty
-          if (!framesByDir[0] || framesByDir[0].length === 0) {
-            const primaryColor = id === "0025" ? "#facc15" : id === "0004" ? "#f97316" : id === "0007" ? "#3b82f6" : "#10b981";
-            for (let d = 0; d < 8; d++) {
-              framesByDir[d] = animDef.durations.map((dur, f) => {
-                const canvas = document.createElement("canvas");
-                canvas.width = animDef.frameWidth;
-                canvas.height = animDef.frameHeight;
-                const ctx = canvas.getContext("2d");
-                if (ctx) {
-                  // Organic Pixel Art Body
-                  const cx = animDef.frameWidth / 2;
-                  const cy = animDef.frameHeight / 2;
-                  const r = Math.min(animDef.frameWidth, animDef.frameHeight) / 3;
-
-                  ctx.fillStyle = primaryColor;
-                  ctx.beginPath();
-                  ctx.arc(cx + (f % 2 === 0 ? -1 : 1), cy + (d % 2 === 0 ? -1 : 1), r, 0, Math.PI * 2);
-                  ctx.fill();
-
-                  ctx.strokeStyle = "#000000";
-                  ctx.lineWidth = 1;
-                  ctx.stroke();
-
-                  // Eyes
-                  ctx.fillStyle = "#000000";
-                  ctx.fillRect(cx - 4, cy - 3, 2, 3);
-                  ctx.fillRect(cx + 2, cy - 3, 2, 3);
-
-                  // Highlight
-                  ctx.fillStyle = "#ffffff";
-                  ctx.fillRect(cx - 4, cy - 3, 1, 1);
-                  ctx.fillRect(cx + 2, cy - 3, 1, 1);
-
-                  if (id === "0025") {
-                    ctx.fillStyle = "#ef4444";
-                    ctx.fillRect(cx - 6, cy + 1, 2, 2);
-                    ctx.fillRect(cx + 4, cy + 1, 2, 2);
-                  }
-                }
-
-                return {
-                  id: `${animId}_d${d}_f${f}`,
-                  animationId: animId,
-                  direction: d,
-                  frameIndex: f,
-                  dataUrl: canvas.toDataURL("image/png"),
-                  duration: dur,
-                  origin: { x: Math.floor(animDef.frameWidth / 2), y: Math.floor(animDef.frameHeight / 2) },
-                };
-              });
-            }
-          }
-
-          return {
-            id: animId,
-            name: animDef.name,
-            sourceName: animDef.name,
-            index: animDef.index,
-            frameWidth: animDef.frameWidth,
-            frameHeight: animDef.frameHeight,
-            directions: 8,
-            durations: animDef.durations,
-            loopMode: "loop" as const,
-            rushFrame: animDef.rushFrame,
-            hitFrame: animDef.hitFrame,
-            returnFrame: animDef.returnFrame,
-            framesByDirection: framesByDir,
-          };
-        })
+      const response = await fetch(
+        `/api/spritecollab/character?path=${encodeURIComponent(path)}`,
       );
+      const payload = (await response.json()) as RemoteCharacterPayload & {
+        error?: string;
+        details?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.details || payload.error || `HTTP ${response.status}`);
+      }
 
+      const parsed = parseAnimDataXml(payload.animDataXml);
+      const assetsByAction = new Map(
+        payload.actions.map((asset) => [asset.action, asset] as const),
+      );
+      const animationsByName = new Map<string, Animation>();
+
+      for (const definition of parsed.anims.filter((animation) => !animation.copyOf)) {
+        const asset = assetsByAction.get(definition.name);
+        if (!asset || asset.kind !== "sprite" || !asset.animUrl) {
+          throw new Error(
+            `A API oficial não forneceu a sheet da ação '${definition.name}'.`,
+          );
+        }
+
+        const [spriteImage, offsetsImage, shadowImage] = await Promise.all([
+          loadAssetImage(asset.animUrl, `${definition.name}-Anim.png`),
+          asset.offsetsUrl
+            ? loadAssetImage(asset.offsetsUrl, `${definition.name}-Offsets.png`)
+            : Promise.resolve(undefined),
+          asset.shadowsUrl
+            ? loadAssetImage(asset.shadowsUrl, `${definition.name}-Shadow.png`)
+            : Promise.resolve(undefined),
+        ]);
+
+        const base = animationBase(payload.path, definition);
+        const sliced = await sliceSpriteSheet(
+          spriteImage,
+          definition.frameWidth,
+          definition.frameHeight,
+          definition.durations,
+          definition.name,
+          base.id,
+          {
+            offsetsSource: offsetsImage,
+            shadowsSource: shadowImage,
+          },
+        );
+
+        animationsByName.set(definition.name, {
+          ...base,
+          directions: sliced.directions,
+          framesByDirection: sliced.framesByDirection,
+          locked: asset.locked,
+          sourceAssets: {
+            animUrl: asset.animUrl,
+            offsetsUrl: asset.offsetsUrl,
+            shadowsUrl: asset.shadowsUrl,
+          },
+          warnings: [...parsed.warnings, ...sliced.warnings],
+        });
+      }
+
+      for (const definition of parsed.anims.filter((animation) => animation.copyOf)) {
+        const source = animationsByName.get(definition.copyOf!);
+        if (!source) {
+          throw new Error(
+            `CopyOf '${definition.name}' referencia '${definition.copyOf}', que não foi carregada.`,
+          );
+        }
+        const base = animationBase(payload.path, definition);
+        const apiAsset = assetsByAction.get(definition.name);
+        animationsByName.set(definition.name, {
+          ...base,
+          frameWidth: source.frameWidth,
+          frameHeight: source.frameHeight,
+          durations: [...source.durations],
+          directions: source.directions,
+          framesByDirection: cloneAliasFrames(source.framesByDirection, base.id),
+          locked: apiAsset?.locked,
+          warnings: [`Ação reutilizada de '${definition.copyOf}' via CopyOf.`],
+        });
+      }
+
+      const animations = parsed.anims.map((definition) => {
+        const animation = animationsByName.get(definition.name);
+        if (!animation) {
+          throw new Error(`A animação '${definition.name}' não foi materializada.`);
+        }
+        return animation;
+      });
+
+      const now = Date.now();
+      const creditNames = payload.credits
+        .map((credit) => credit.name || credit.id)
+        .filter(Boolean)
+        .join(", ");
       const creature: Creature = {
-        id: `spritecollab:${id}`,
+        id: `spritecollab:${payload.path}`,
         sourceKind: "remote",
-        numericId: id,
-        displayName: data.displayName,
-        species: data.displayName,
-        shadowSize: parsedXml.shadowSize,
+        sourceRef: payload.path,
+        numericId: payload.numericId,
+        displayName: payload.displayName,
+        species: payload.displayName,
+        form: payload.formPath || undefined,
+        shadowSize: parsed.shadowSize,
         animations,
-        license: data.license,
+        license: payload.license,
         provenance: {
-          origin: "PMDCollab/SpriteCollab",
-          author: "Contribuinte SpriteCollab",
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
+          origin: "PMDCollab/SpriteCollab — API oficial",
+          author: creditNames || "Créditos disponíveis no PMDCollab",
+          commitHash: payload.sourceCommit,
+          createdAt: now,
+          updatedAt: payload.sourceUpdatedAt
+            ? Date.parse(payload.sourceUpdatedAt) || now
+            : now,
         },
         versions: [
           {
-            versionId: `v1_remote`,
-            timestamp: Date.now(),
-            description: "Remoto original SpriteCollab",
-            author: "SpriteCollab",
+            versionId: `remote_${payload.sourceCommit || now}`,
+            timestamp: now,
+            description: "Asset remoto carregado da API oficial do SpriteCollab",
+            author: "PMDCollab",
           },
         ],
-        currentVersionId: `v1_remote`,
+        currentVersionId: `remote_${payload.sourceCommit || now}`,
       };
-
       return creature;
+    } catch (error) {
+      const message = `Falha ao carregar '${path}': ${errorMessage(error)}`;
+      setAppError(message);
+      throw new Error(message);
     } finally {
       setIsLoading(false);
     }
   };
 
-  /**
-   * Creates an original creature/sprite from scratch ("Criar do Zero")
-   */
   const handleCreateFromScratch = async (params: {
     name: string;
     numericId: string;
@@ -241,99 +339,81 @@ export default function App() {
     frameHeight: number;
     primaryColor: string;
   }): Promise<Creature> => {
-    const newId = `local_custom_${Date.now()}`;
-    const animNames = ["Idle", "Walk", "Attack"];
+    const newId = `local:${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const actionDefinitions = [
+      { name: "Idle", durations: [12, 12] },
+      { name: "Walk", durations: [6, 6, 6, 6] },
+      { name: "Attack", durations: [4, 4, 6] },
+    ];
+    const transparentCell = blankFrameDataUrl(params.frameWidth, params.frameHeight);
 
-    const animations = animNames.map((animName, animIdx) => {
-      const animId = `${newId}_${animName.toLowerCase()}`;
-      const durations = animName === "Walk" ? [6, 6, 6] : animName === "Attack" ? [4, 4, 6] : [10, 10];
-      const framesByDir: Record<number, any[]> = {};
-
-      for (let d = 0; d < 8; d++) {
-        framesByDir[d] = durations.map((dur, f) => {
-          const canvas = document.createElement("canvas");
-          canvas.width = params.frameWidth;
-          canvas.height = params.frameHeight;
-          const ctx = canvas.getContext("2d");
-
-          if (ctx) {
-            const cx = params.frameWidth / 2;
-            const cy = params.frameHeight / 2;
-            const r = Math.min(params.frameWidth, params.frameHeight) / 3;
-
-            // Pixel Art Body shape
-            ctx.fillStyle = params.primaryColor;
-            ctx.beginPath();
-            ctx.arc(cx + (f % 2 === 0 ? -1 : 1), cy + (d % 2 === 0 ? -1 : 1), r, 0, Math.PI * 2);
-            ctx.fill();
-
-            ctx.strokeStyle = "#000000";
-            ctx.lineWidth = 1;
-            ctx.stroke();
-
-            // Face details
-            ctx.fillStyle = "#000000";
-            ctx.fillRect(cx - 3, cy - 2, 2, 2);
-            ctx.fillRect(cx + 1, cy - 2, 2, 2);
-          }
-
-          return {
-            id: `${animId}_d${d}_f${f}`,
-            animationId: animId,
-            direction: d,
-            frameIndex: f,
-            dataUrl: canvas.toDataURL("image/png"),
-            duration: dur,
-            origin: { x: Math.floor(params.frameWidth / 2), y: Math.floor(params.frameHeight / 2) },
-          };
-        });
+    const animations: Animation[] = actionDefinitions.map((definition, index) => {
+      const id = `${newId}_${definition.name.toLowerCase()}`;
+      const framesByDirection: Record<number, Frame[]> = {};
+      for (let direction = 0; direction < 8; direction += 1) {
+        framesByDirection[direction] = definition.durations.map((duration, frameIndex) => ({
+          id: `${id}_d${direction}_f${frameIndex}`,
+          animationId: id,
+          direction,
+          frameIndex,
+          dataUrl: transparentCell,
+          duration,
+          origin: {
+            x: Math.floor(params.frameWidth / 2),
+            y: Math.floor(params.frameHeight / 2),
+          },
+        }));
       }
-
       return {
-        id: animId,
-        name: animName,
-        sourceName: animName,
-        index: animIdx,
+        id,
+        name: definition.name,
+        sourceName: definition.name,
+        index,
         frameWidth: params.frameWidth,
         frameHeight: params.frameHeight,
         directions: 8,
-        durations,
-        loopMode: "loop" as const,
-        framesByDirection: framesByDir,
+        durations: [...definition.durations],
+        loopMode: "loop",
+        framesByDirection,
+        warnings: [
+          `Projeto vazio criado com a cor de referência ${params.primaryColor}; desenhe os frames no editor.`,
+        ],
       };
     });
 
-    const newCreature: Creature = {
+    const now = Date.now();
+    const versionId = `v1_${now}`;
+    const creature: Creature = {
       id: newId,
       sourceKind: "local",
-      numericId: params.numericId || "9000",
-      displayName: params.name || "Criatura Customizada",
-      species: params.name || "Custom",
+      numericId: params.numericId.trim() || "9000",
+      displayName: params.name.trim() || "Criatura customizada",
+      species: params.name.trim() || "Custom",
       shadowSize: 1,
       animations,
-      license: "Custom User License",
+      license: "Criação original do usuário",
       provenance: {
-        origin: "Criado do Zero (Local)",
+        origin: "Projeto PMD vazio criado no SAGA SpriteLab",
         author: "Usuário",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt: now,
+        updatedAt: now,
       },
       versions: [
         {
-          versionId: "v1_scratch",
-          timestamp: Date.now(),
-          description: "Criado do zero pelo usuário",
+          versionId,
+          timestamp: now,
+          description: "Estrutura inicial vazia",
           author: "Usuário",
         },
       ],
-      currentVersionId: "v1_scratch",
+      currentVersionId: versionId,
     };
 
-    await LocalStore.saveCreature(newCreature);
-    await loadLocalDatabase();
-    handleSetActiveCreature(newCreature);
+    await LocalStore.saveCreature(creature);
+    await loadLocalDatabase(true);
+    handleSetActiveCreature(creature);
     setActiveTab("studio");
-    return newCreature;
+    return creature;
   };
 
   const handleDuplicateToLocal = async (creature: Creature) => {
@@ -345,16 +425,16 @@ export default function App() {
 
   const handleOpenPixelEditor = (
     creature: Creature,
-    animationId: string,
+    animationIdValue: string,
     frameIndex: number,
-    direction: number
+    direction: number,
   ) => {
     handleSetActiveCreature(creature);
-    setEditorParams({ animationId, frameIndex, direction });
+    setEditorParams({ animationId: animationIdValue, frameIndex, direction });
     setActiveTab("pixel_editor");
   };
 
-  const handleOpenAiLab = (creature: Creature, animationName: string, direction: number) => {
+  const handleOpenAiLab = (creature: Creature) => {
     handleSetActiveCreature(creature);
     setActiveTab("ai_lab");
   };
@@ -365,69 +445,48 @@ export default function App() {
   };
 
   const handleSavedCreature = async (updated: Creature) => {
-    if (updated.sourceKind === "local") {
+    if (updated.sourceKind !== "remote") {
       await LocalStore.saveCreature(updated);
-      await loadLocalDatabase(true); // Don't auto-select while saving
+      await loadLocalDatabase(true);
     }
-    
-    // Update history
-    const newHist = history.slice(0, historyIndex + 1);
-    newHist.push(updated);
-    setHistory(newHist);
-    setHistoryIndex(newHist.length - 1);
-    
+
+    const nextHistory = history.slice(0, historyIndex + 1);
+    nextHistory.push(updated);
+    setHistory(nextHistory);
+    setHistoryIndex(nextHistory.length - 1);
     setActiveCreature(updated);
   };
 
   const handleUndo = async () => {
-    if (historyIndex > 0) {
-      const prev = history[historyIndex - 1];
-      setHistoryIndex(historyIndex - 1);
-      setActiveCreature(prev);
-      if (prev.sourceKind === "local") {
-        await LocalStore.saveCreature(prev);
-        await loadLocalDatabase(true);
-      }
+    if (historyIndex <= 0) return;
+    const previous = history[historyIndex - 1];
+    setHistoryIndex(historyIndex - 1);
+    setActiveCreature(previous);
+    if (previous.sourceKind !== "remote") {
+      await LocalStore.saveCreature(previous);
+      await loadLocalDatabase(true);
     }
   };
 
   const handleRedo = async () => {
-    if (historyIndex < history.length - 1) {
-      const next = history[historyIndex + 1];
-      setHistoryIndex(historyIndex + 1);
-      setActiveCreature(next);
-      if (next.sourceKind === "local") {
-        await LocalStore.saveCreature(next);
-        await loadLocalDatabase(true);
-      }
-    }
-  };
-
-  const handleSetActiveCreature = (c: Creature | null) => {
-    if (activeCreature?.id === c?.id) {
-      // Just update reference, don't reset history if it's the same creature
-      setActiveCreature(c);
-      return;
-    }
-    
-    setActiveCreature(c);
-    if (c) {
-      setHistory([c]);
-      setHistoryIndex(0);
-    } else {
-      setHistory([]);
-      setHistoryIndex(-1);
+    if (historyIndex >= history.length - 1) return;
+    const next = history[historyIndex + 1];
+    setHistoryIndex(historyIndex + 1);
+    setActiveCreature(next);
+    if (next.sourceKind !== "remote") {
+      await LocalStore.saveCreature(next);
+      await loadLocalDatabase(true);
     }
   };
 
   const handleDeleteCreature = async (id: string) => {
     await LocalStore.deleteCreature(id);
-    const isActive = activeCreature?.id === id;
-    if (isActive) {
+    const deletingActive = activeCreature?.id === id;
+    if (deletingActive) {
       handleSetActiveCreature(null);
       setActiveTab("library");
     }
-    await loadLocalDatabase(isActive); // pass preventAutoSelect if we just deleted the active one
+    await loadLocalDatabase(deletingActive);
   };
 
   return (
@@ -443,23 +502,38 @@ export default function App() {
         onRedo={handleRedo}
       />
 
+      {appError && (
+        <div className="mx-auto mt-4 max-w-7xl px-4 md:px-6">
+          <div className="flex items-start justify-between gap-4 rounded-lg border border-rose-700/60 bg-rose-950/70 px-4 py-3 text-sm text-rose-100">
+            <span>{appError}</span>
+            <button
+              type="button"
+              onClick={() => setAppError(null)}
+              className="shrink-0 text-xs font-semibold text-rose-300 hover:text-white"
+            >
+              Fechar
+            </button>
+          </div>
+        </div>
+      )}
+
       <main className="transition-all">
         {activeTab === "library" && (
           <UnifiedLibrary
             remoteIndex={remoteIndex}
             localCreatures={localCreatures}
-            onSelectCreature={(c) => {
-              handleSetActiveCreature(c);
+            onSelectCreature={(creature) => {
+              handleSetActiveCreature(creature);
               setActiveTab("studio");
             }}
             onDuplicateToLocal={handleDuplicateToLocal}
             onOpenNpcTest={handleOpenNpcTest}
-            onExportZip={(c) => {
-              handleSetActiveCreature(c);
+            onExportZip={(creature) => {
+              handleSetActiveCreature(creature);
               setActiveTab("export_import");
             }}
             onDeleteCreature={handleDeleteCreature}
-            onSyncRemote={syncRemoteIndex}
+            onSyncRemote={() => syncRemoteIndex(true)}
             onLoadRemoteCharacter={loadRemoteCharacter}
             onCreateFromScratch={handleCreateFromScratch}
             isLoading={isLoading}
@@ -473,8 +547,8 @@ export default function App() {
             onOpenPixelEditor={handleOpenPixelEditor}
             onOpenAiLab={handleOpenAiLab}
             onOpenNpcTest={handleOpenNpcTest}
-            onExportZip={(c) => {
-              handleSetActiveCreature(c);
+            onExportZip={(creature) => {
+              handleSetActiveCreature(creature);
               setActiveTab("export_import");
             }}
             onUpdateCreature={handleSavedCreature}
@@ -496,21 +570,24 @@ export default function App() {
           <AiStudioLab
             creature={activeCreature}
             onVersionApproved={(updated) => {
-              handleSavedCreature(updated);
+              void handleSavedCreature(updated);
               setActiveTab("studio");
             }}
           />
         )}
 
-        {activeTab === "behavior_lab" && activeCreature && <BehaviorLab creature={activeCreature} />}
-
-        {activeTab === "playground" && activeCreature && <BehaviorLab creature={activeCreature} />}
+        {activeTab === "behavior_lab" && activeCreature && (
+          <BehaviorLab creature={activeCreature} />
+        )}
+        {activeTab === "playground" && activeCreature && (
+          <BehaviorLab creature={activeCreature} />
+        )}
 
         {activeTab === "export_import" && activeCreature && (
           <ImportExportModal
             activeCreature={activeCreature}
             onImported={(newCreature) => {
-              handleSavedCreature(newCreature);
+              void handleSavedCreature(newCreature);
               setActiveTab("studio");
             }}
           />
