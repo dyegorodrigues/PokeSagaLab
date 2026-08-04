@@ -79,13 +79,13 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
 
   const directionLabels = [
     "0: Sul (S)",
-    "1: Sudoeste (SW)",
-    "2: Oeste (W)",
-    "3: Noroeste (NW)",
+    "1: Sudeste (SE)",
+    "2: Leste (E)",
+    "3: Nordeste (NE)",
     "4: Norte (N)",
-    "5: Nordeste (NE)",
-    "6: Leste (E)",
-    "7: Sudeste (SE)",
+    "5: Noroeste (NW)",
+    "6: Oeste (W)",
+    "7: Sudoeste (SW)",
   ];
 
   const handleMoveFrame = (fromIndex: number, toIndex: number) => {

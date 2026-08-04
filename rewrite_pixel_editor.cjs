@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+const fs = require('fs');
+
+const code = `import React, { useState, useEffect, useRef } from "react";
 import { Creature, Frame } from "../types";
 import { LocalStore } from "../stores/localStore";
 import {
@@ -305,7 +307,7 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
     } else if (tool === "pipette") {
       const imgData = ctx.getImageData(x, y, 1, 1).data;
       if (imgData[3] > 0) {
-        const hex = `#${((1 << 24) + (imgData[0] << 16) + (imgData[1] << 8) + imgData[2]).toString(16).slice(1)}`;
+        const hex = \`#\${((1 << 24) + (imgData[0] << 16) + (imgData[1] << 8) + imgData[2]).toString(16).slice(1)}\`;
         setSelectedColor(hex);
         setTool("pencil");
       }
@@ -368,7 +370,7 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
 
     if (updatedCreature.sourceKind === "remote") {
       updatedCreature.sourceKind = "local";
-      updatedCreature.id = `local:${Date.now()}`;
+      updatedCreature.id = \`local:\${Date.now()}\`;
       if (!updatedCreature.displayName.includes("Editado")) {
         updatedCreature.displayName += " (Editado)";
       }
@@ -436,7 +438,7 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
               key={t.id}
               onClick={() => setTool(t.id as any)}
               title={t.title}
-              className={`p-2 rounded-lg transition ${tool === t.id ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-[#444] hover:text-white'}`}
+              className={\`p-2 rounded-lg transition \${tool === t.id ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:bg-[#444] hover:text-white'}\`}
             >
               <t.icon className="w-4 h-4" />
             </button>
@@ -449,7 +451,7 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
             <RotateCw className="w-4 h-4" />
           </button>
           <div className="w-8 h-px bg-[#4c4c4c] my-2" />
-          <button onClick={() => setOnionSkin(!onionSkin)} title="Onion Skin" className={`p-2 rounded-lg ${onionSkin ? 'text-amber-400 bg-[#444]' : 'text-slate-400 hover:text-white hover:bg-[#444]'}`}>
+          <button onClick={() => setOnionSkin(!onionSkin)} title="Onion Skin" className={\`p-2 rounded-lg \${onionSkin ? 'text-amber-400 bg-[#444]' : 'text-slate-400 hover:text-white hover:bg-[#444]'}\`}>
             <Layers className="w-4 h-4" />
           </button>
         </div>
@@ -498,7 +500,7 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
                   <button
                     key={idx}
                     onClick={() => { commitCurrentFrame(); setCurrentFrameIdx(idx); }}
-                    className={`w-10 h-10 border-2 rounded overflow-hidden flex-shrink-0 transition-all ${idx === currentFrameIdx ? 'border-indigo-500 scale-110 shadow-lg' : 'border-transparent opacity-50 hover:opacity-100'}`}
+                    className={\`w-10 h-10 border-2 rounded overflow-hidden flex-shrink-0 transition-all \${idx === currentFrameIdx ? 'border-indigo-500 scale-110 shadow-lg' : 'border-transparent opacity-50 hover:opacity-100'}\`}
                   >
                     <img src={f.dataUrl || ""} alt="frame" className="w-full h-full object-contain image-pixelated bg-[#1e1e1e]" />
                   </button>
@@ -548,9 +550,9 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
                 <button
                   key={i}
                   onClick={() => setSelectedColor(color)}
-                  className={`w-full aspect-square rounded shadow-sm border cursor-pointer hover:scale-105 transition-transform ${
+                  className={\`w-full aspect-square rounded shadow-sm border cursor-pointer hover:scale-105 transition-transform \${
                      selectedColor === color ? 'border-white' : 'border-[#3c3c3c]'
-                  }`}
+                  }\`}
                   style={{ 
                     backgroundColor: color, 
                     backgroundImage: color === "rgba(0,0,0,0)" ? "url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMCIgaGVpZ2h0PSIxMCI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjZmZmIi8+PHJlY3Qgd2lkdGg9IjUiIGhlaWdodD0iNSIgZmlsbD0iI2NjYyIvPjxyZWN0IHg9IjUiIHk9IjUiIHdpZHRoPSI1IiBoZWlnaHQ9IjUiIGZpbGw9IiNjY2MiLz48L3N2Zz4=')" : "none" 
@@ -589,3 +591,5 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
     </div>
   );
 };
+`
+fs.writeFileSync('src/components/PixelEditor.tsx', code);

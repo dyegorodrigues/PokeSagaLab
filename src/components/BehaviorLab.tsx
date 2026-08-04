@@ -150,8 +150,11 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
         img.src = frame.dataUrl;
       }
     } else {
-      ctx.fillStyle = "#facc15";
-      ctx.fillRect(npcState.x - 12, npcState.y - 12, 24, 24);
+      ctx.fillStyle = "rgba(255, 0, 0, 0.5)";
+      ctx.fillRect(npcState.x - 8, npcState.y - 8, 16, 16);
+      ctx.fillStyle = "white";
+      ctx.font = "bold 12px Arial";
+      ctx.fillText("?", npcState.x, npcState.y + 4);
     }
 
     // Draw Name Tag above NPC
