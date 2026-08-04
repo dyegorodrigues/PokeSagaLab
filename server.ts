@@ -2,102 +2,102 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import {
-  SPRITE_0025_ANIM_DATA,
-  DEFAULT_SPRITECOLLAB_INDEX,
-} from "./server/services/spritecollabFixture";
-import {
   createGenerationPlan,
   generateSpriteImageWithNanoBanana,
 } from "./server/services/geminiService";
+import {
+  fetchWhitelistedAsset,
+  getSpriteCollabCharacter,
+  getSpriteCollabIndex,
+} from "./server/services/spritecollabService";
+
+function messageFromError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
+  app.disable("x-powered-by");
   app.use(express.json({ limit: "50mb" }));
 
-  // --- API Routes ---
-
-  // Health check
   app.get("/api/health", (_req, res) => {
     res.json({
       status: "ok",
       app: "SAGA SpriteLab AI",
       time: new Date().toISOString(),
+      spriteCollabSource: "https://spriteserver.pmdcollab.org/graphql",
     });
   });
 
-  // SpriteCollab Index
-  app.get("/api/spritecollab/index", async (_req, res) => {
+  app.get("/api/spritecollab/index", async (req, res) => {
     try {
-      // Attempt GitHub API request if token or online, else return rich fixture index
+      const result = await getSpriteCollabIndex(req.query.refresh === "1");
+      res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
       res.json({
-        source: "PMDCollab/SpriteCollab",
-        count: DEFAULT_SPRITECOLLAB_INDEX.length,
-        items: DEFAULT_SPRITECOLLAB_INDEX,
+        source: "PMDCollab official GraphQL API",
+        sourceCommit: result.sourceCommit,
+        sourceUpdatedAt: result.sourceUpdatedAt,
+        count: result.items.length,
+        items: result.items,
       });
-    } catch (err: any) {
-      res.json({
-        source: "Fallback Fixtures",
-        count: DEFAULT_SPRITECOLLAB_INDEX.length,
-        items: DEFAULT_SPRITECOLLAB_INDEX,
+    } catch (error) {
+      console.error("SpriteCollab index error:", error);
+      res.status(502).json({
+        error: "Não foi possível sincronizar o índice oficial do SpriteCollab.",
+        details: messageFromError(error),
       });
     }
   });
 
-  // SpriteCollab Character Details (AnimData.xml)
-  app.get("/api/spritecollab/character/:id", async (req, res) => {
-    const id = req.params.id;
-    const cleanId = id.padStart(4, "0");
+  app.get("/api/spritecollab/character", async (req, res) => {
+    const requestedPath = typeof req.query.path === "string" ? req.query.path : "";
+    if (!requestedPath) {
+      return res.status(400).json({ error: "O parâmetro 'path' é obrigatório." });
+    }
 
     try {
-      const targetUrl = `https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/sprite/${cleanId}/AnimData.xml`;
-      const response = await fetch(targetUrl);
-      
-      let animDataXml = "";
-      if (response.ok) {
-        animDataXml = await response.text();
-      } else {
-        animDataXml = cleanId === "0025" ? SPRITE_0025_ANIM_DATA : SPRITE_0025_ANIM_DATA.replace("Pikachu", `Pokemon ${cleanId}`);
-      }
-
-      const nameMatch = DEFAULT_SPRITECOLLAB_INDEX.find(item => item.id === cleanId);
-      const displayName = nameMatch ? nameMatch.name : `Personagem (${cleanId})`;
-
-      return res.json({
-        id: cleanId,
-        numericId: cleanId,
-        displayName: displayName,
-        path: `sprite/${cleanId}`,
-        animDataXml: animDataXml,
-        license: "PMDCollab License",
-        rawBaseUrl: `/api/spritecollab/raw/sprite/${cleanId}`,
+      const character = await getSpriteCollabCharacter(requestedPath);
+      res.setHeader("Cache-Control", "public, max-age=300, stale-while-revalidate=600");
+      return res.json(character);
+    } catch (error) {
+      console.error("SpriteCollab character error:", error);
+      return res.status(502).json({
+        error: "Não foi possível carregar o personagem do SpriteCollab.",
+        details: messageFromError(error),
       });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
     }
   });
 
-  // Proxy Raw Assets from GitHub PMDCollab/SpriteCollab
-  app.get("/api/spritecollab/raw/*", async (req, res) => {
-    const assetPath = req.params[0];
-    const targetUrl = `https://raw.githubusercontent.com/PMDCollab/SpriteCollab/master/${assetPath}`;
+  app.get("/api/spritecollab/asset", async (req, res) => {
+    const rawUrl = typeof req.query.url === "string" ? req.query.url : "";
+    if (!rawUrl) {
+      return res.status(400).json({ error: "O parâmetro 'url' é obrigatório." });
+    }
 
     try {
-      const response = await fetch(targetUrl);
-      if (!response.ok) {
-        return res.status(response.status).send("Asset not found on remote GitHub repo.");
-      }
-      const contentType = response.headers.get("content-type") || "image/png";
+      const upstream = await fetchWhitelistedAsset(rawUrl);
+      const contentType = upstream.headers.get("content-type") || "application/octet-stream";
+      const contentLength = upstream.headers.get("content-length");
+      const etag = upstream.headers.get("etag");
+
       res.setHeader("Content-Type", contentType);
-      const buffer = await response.arrayBuffer();
-      res.send(Buffer.from(buffer));
-    } catch (err: any) {
-      res.status(502).send("Error fetching remote raw asset: " + err.message);
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      if (contentLength) res.setHeader("Content-Length", contentLength);
+      if (etag) res.setHeader("ETag", etag);
+
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      return res.send(buffer);
+    } catch (error) {
+      console.error("SpriteCollab asset proxy error:", error);
+      return res.status(502).json({
+        error: "Não foi possível carregar o asset remoto.",
+        details: messageFromError(error),
+      });
     }
   });
 
-  // Gemini AI Generation Plan
   app.post("/api/gemini/plan", async (req, res) => {
     try {
       const { prompt, targetCreatureId, targetAnimationName, targetDirection } = req.body;
@@ -105,31 +105,31 @@ async function startServer() {
         prompt || "Nova variação de sprite",
         targetCreatureId || "0025",
         targetAnimationName || "Walk",
-        targetDirection || 0
+        targetDirection || 0,
       );
       res.json({ success: true, plan });
-    } catch (err: any) {
-      console.error("Gemini Plan Error:", err);
-      res.status(500).json({ success: false, error: err.message });
+    } catch (error) {
+      console.error("Gemini Plan Error:", error);
+      res.status(500).json({ success: false, error: messageFromError(error) });
     }
   });
 
-  // Gemini Nano Banana Image Generation
   app.post("/api/gemini/generate-image", async (req, res) => {
     try {
       const { plan, referenceImage } = req.body;
       if (!plan) {
-        return res.status(400).json({ success: false, error: "Missing 'plan' in request body" });
+        return res
+          .status(400)
+          .json({ success: false, error: "Missing 'plan' in request body" });
       }
       const rawImageUrl = await generateSpriteImageWithNanoBanana(plan, referenceImage);
-      res.json({ success: true, rawImageUrl });
-    } catch (err: any) {
-      console.error("Gemini Generate Image Error:", err);
-      res.status(500).json({ success: false, error: err.message });
+      return res.json({ success: true, rawImageUrl });
+    } catch (error) {
+      console.error("Gemini Generate Image Error:", error);
+      return res.status(500).json({ success: false, error: messageFromError(error) });
     }
   });
 
-  // --- Vite Middleware or Static Production Serving ---
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -149,4 +149,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch((error) => {
+  console.error("Failed to start SAGA SpriteLab AI:", error);
+  process.exitCode = 1;
+});
