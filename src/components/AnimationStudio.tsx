@@ -1,41 +1,81 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Creature, Animation } from "../types";
-import { assembleSpriteSheet } from "../domain/parser/animDataParser";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  Play,
-  Pause,
-  SkipBack,
-  SkipForward,
-  RotateCcw,
-  Copy,
-  Edit3,
-  Sparkles,
   Bot,
-  Grid,
-  Layers,
-  Compass,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
   Download,
+  Edit3,
   Eye,
-  Zap,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUp,
-  ArrowDown,
-  Plus,
-  Trash2,
-  Clock,
-  Undo2,
-  Redo2,
+  Grid3X3,
+  Layers3,
+  Pause,
+  Play,
+  Sparkles,
 } from "lucide-react";
+import { Animation, Creature, Frame } from "../types";
+import {
+  SpriteSheetLayer,
+  assembleSpriteSheet,
+} from "../domain/parser/animDataParser";
 
 interface AnimationStudioProps {
   creature: Creature;
   onDuplicateToLocal: (creature: Creature) => void;
-  onOpenPixelEditor: (creature: Creature, animationId: string, frameIndex: number, direction: number) => void;
-  onOpenAiLab: (creature: Creature, animationName: string, direction: number) => void;
+  onOpenPixelEditor: (
+    creature: Creature,
+    animationId: string,
+    frameIndex: number,
+    direction: number,
+  ) => void;
+  onOpenAiLab: (
+    creature: Creature,
+    animationName: string,
+    direction: number,
+  ) => void;
   onOpenNpcTest: (creature: Creature) => void;
   onExportZip: (creature: Creature) => void;
   onUpdateCreature?: (updatedCreature: Creature) => void;
+}
+
+const DIRECTIONS = [
+  { index: 0, label: "S", name: "Sul" },
+  { index: 1, label: "SE", name: "Sudeste" },
+  { index: 2, label: "E", name: "Leste" },
+  { index: 3, label: "NE", name: "Nordeste" },
+  { index: 4, label: "N", name: "Norte" },
+  { index: 5, label: "NW", name: "Noroeste" },
+  { index: 6, label: "W", name: "Oeste" },
+  { index: 7, label: "SW", name: "Sudoeste" },
+] as const;
+
+const BACKGROUNDS = {
+  checker:
+    "repeating-conic-gradient(#172033 0% 25%, #0f172a 0% 50%) 50% / 18px 18px",
+  magenta: "#ff00ff",
+  grass:
+    "linear-gradient(#183c32 0 68%, #245a3d 68% 72%, #2e6b42 72% 100%)",
+} as const;
+
+function cloneCreature(creature: Creature): Creature {
+  if (typeof structuredClone === "function") return structuredClone(creature);
+  return JSON.parse(JSON.stringify(creature)) as Creature;
+}
+
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const anchor = document.createElement("a");
+  anchor.href = dataUrl;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function frameLayerUrl(frame: Frame | undefined, layer: SpriteSheetLayer) {
+  if (!frame) return undefined;
+  if (layer === "sprite") return frame.dataUrl;
+  if (layer === "offsets") return frame.offsetsDataUrl;
+  return frame.shadowDataUrl;
 }
 
 export const AnimationStudio: React.FC<AnimationStudioProps> = ({
@@ -47,717 +87,584 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
   onExportZip,
   onUpdateCreature,
 }) => {
-  const [selectedAnimIndex, setSelectedAnimIndex] = useState(0);
-  const [direction, setDirection] = useState(0); // 0 to 7
-  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
-  const [bgMode, setBgMode] = useState<"checker" | "magenta" | "grass">("checker");
-  const [showGrid, setShowGrid] = useState(true);
-  const [showShadow, setShowShadow] = useState(true);
-  const [showMultiDirView, setShowMultiDirView] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(4); // 4x default zoom
-  const [viewMode, setViewMode] = useState<"standard" | "isometric">("standard");
+  const [selectedAnimationId, setSelectedAnimationId] = useState(
+    creature.animations[0]?.id || "",
+  );
+  const [direction, setDirection] = useState(0);
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [playing, setPlaying] = useState(true);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [zoom, setZoom] = useState(5);
+  const [background, setBackground] = useState<keyof typeof BACKGROUNDS>("checker");
+  const [layer, setLayer] = useState<SpriteSheetLayer>("sprite");
+  const [showAnchors, setShowAnchors] = useState(true);
+  const [showAllDirections, setShowAllDirections] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
-  const activeAnim: Animation | undefined = creature.animations[selectedAnimIndex] || creature.animations[0];
-  const frames = activeAnim?.framesByDirection?.[direction] || [];
-  const currentFrame = frames[currentFrameIndex] || frames[0];
+  const animation = useMemo(
+    () =>
+      creature.animations.find((candidate) => candidate.id === selectedAnimationId) ||
+      creature.animations[0],
+    [creature.animations, selectedAnimationId],
+  );
+  const availableDirections = animation?.directions === 1 ? DIRECTIONS.slice(0, 1) : DIRECTIONS;
+  const frames = animation?.framesByDirection[direction] || [];
+  const currentFrame = frames[frameIndex] || frames[0];
+  const readOnly = creature.sourceKind === "remote";
 
-  // Animation Loop Timer
   useEffect(() => {
-    if (!isPlaying || !frames.length) return;
+    const stillExists = creature.animations.some(
+      (candidate) => candidate.id === selectedAnimationId,
+    );
+    if (!stillExists) setSelectedAnimationId(creature.animations[0]?.id || "");
+  }, [creature.animations, selectedAnimationId]);
 
-    // PMDCollab durations are often based on a 30fps equivalent tick or 
-    // the user reported 1.0 is too fast and 0.5 is correct. Thus, 16.6 * 2 = ~33.3ms per tick.
-    const frameDurationMs = ((currentFrame?.duration || 6) * 33.3) / playbackSpeed;
-    const timeout = setTimeout(() => {
-      setCurrentFrameIndex((prev) => (prev + 1) % frames.length);
-    }, frameDurationMs);
+  useEffect(() => {
+    if (!animation) return;
+    if (animation.directions === 1 && direction !== 0) setDirection(0);
+    if (animation.directions === 8 && direction > 7) setDirection(0);
+    setFrameIndex(0);
+  }, [animation?.id, animation?.directions]);
 
-    return () => clearTimeout(timeout);
-  }, [isPlaying, currentFrameIndex, frames, playbackSpeed, currentFrame?.duration]);
+  useEffect(() => {
+    if (!playing || !currentFrame || frames.length <= 1) return;
+    // PMD durations are expressed in 1/60-second ticks.
+    const durationMs = Math.max(
+      1,
+      (currentFrame.duration * 1000) / 60 / Math.max(playbackRate, 0.1),
+    );
+    const timer = window.setTimeout(() => {
+      setFrameIndex((current) => (current + 1) % frames.length);
+    }, durationMs);
+    return () => window.clearTimeout(timer);
+  }, [currentFrame, frames.length, playing, playbackRate]);
 
-  const directionLabels = [
-    "0: Sul (S)",
-    "1: Sudeste (SE)",
-    "2: Leste (E)",
-    "3: Nordeste (NE)",
-    "4: Norte (N)",
-    "5: Noroeste (NW)",
-    "6: Oeste (W)",
-    "7: Sudoeste (SW)",
-  ];
-
-  const handleMoveFrame = (fromIndex: number, toIndex: number) => {
-    if (!activeAnim || !onUpdateCreature) return;
-    if (toIndex < 0 || toIndex >= frames.length) return;
-
-    const updatedCreature: Creature = JSON.parse(JSON.stringify(creature));
-    const targetAnim = updatedCreature.animations.find((a) => a.id === activeAnim.id);
-    if (!targetAnim) return;
-
-    // Swap durations
-    const durTemp = targetAnim.durations[fromIndex];
-    targetAnim.durations[fromIndex] = targetAnim.durations[toIndex];
-    targetAnim.durations[toIndex] = durTemp;
-
-    // Swap frames across all 8 directions
-    for (let d = 0; d < 8; d++) {
-      const dirFrames = targetAnim.framesByDirection[d];
-      if (dirFrames && dirFrames[fromIndex] && dirFrames[toIndex]) {
-        const temp = dirFrames[fromIndex];
-        dirFrames[fromIndex] = dirFrames[toIndex];
-        dirFrames[toIndex] = temp;
-        dirFrames[fromIndex].frameIndex = fromIndex;
-        dirFrames[toIndex].frameIndex = toIndex;
-      }
-    }
-
-    onUpdateCreature(updatedCreature);
-    setCurrentFrameIndex(toIndex);
-  };
-
-  const handleDuplicateFrame = (fIndex: number) => {
-    if (!activeAnim || !onUpdateCreature) return;
-
-    const updatedCreature: Creature = JSON.parse(JSON.stringify(creature));
-    const targetAnim = updatedCreature.animations.find((a) => a.id === activeAnim.id);
-    if (!targetAnim) return;
-
-    targetAnim.durations.splice(fIndex + 1, 0, targetAnim.durations[fIndex] || 6);
-
-    for (let d = 0; d < 8; d++) {
-      const dirFrames = targetAnim.framesByDirection[d];
-      if (dirFrames && dirFrames[fIndex]) {
-        const cloneFrame = {
-          ...dirFrames[fIndex],
-          id: `${targetAnim.id}_d${d}_f${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
-          frameIndex: fIndex + 1,
-        };
-        dirFrames.splice(fIndex + 1, 0, cloneFrame);
-        dirFrames.forEach((fr, idx) => (fr.frameIndex = idx));
-      }
-    }
-
-    onUpdateCreature(updatedCreature);
-    setCurrentFrameIndex(fIndex + 1);
-  };
-
-  const handleDeleteFrame = (fIndex: number) => {
-    if (!activeAnim || !onUpdateCreature || frames.length <= 1) return;
-
-    const updatedCreature: Creature = JSON.parse(JSON.stringify(creature));
-    const targetAnim = updatedCreature.animations.find((a) => a.id === activeAnim.id);
-    if (!targetAnim) return;
-
-    targetAnim.durations.splice(fIndex, 1);
-
-    for (let d = 0; d < 8; d++) {
-      const dirFrames = targetAnim.framesByDirection[d];
-      if (dirFrames && dirFrames[fIndex]) {
-        dirFrames.splice(fIndex, 1);
-        dirFrames.forEach((fr, idx) => (fr.frameIndex = idx));
-      }
-    }
-
-    onUpdateCreature(updatedCreature);
-    setCurrentFrameIndex(Math.max(0, fIndex - 1));
-  };
-
-  const handleNudgeOrigin = (dx: number, dy: number) => {
-    if (!activeAnim || !onUpdateCreature || !currentFrame) return;
-    const updatedCreature: Creature = JSON.parse(JSON.stringify(creature));
-    const targetAnim = updatedCreature.animations.find((a) => a.id === activeAnim.id);
-    if (!targetAnim) return;
-
-    // Apply offset change to all directions for this frame index to keep it consistent
-    // if we just want it to be per-frame-index, or per-direction?
-    // Actually, PMD offsets apply to the specific frame across the entire animation typically, 
-    // or we can just apply it to the specific directional frame. Let's do specific directional frame for precise control.
-    const frameToUpdate = targetAnim.framesByDirection[direction][currentFrameIndex];
-    if (frameToUpdate) {
-      if (!frameToUpdate.origin) {
-        frameToUpdate.origin = { x: Math.floor(targetAnim.frameWidth / 2), y: Math.floor(targetAnim.frameHeight / 2) };
-      }
-      frameToUpdate.origin.x += dx;
-      frameToUpdate.origin.y += dy;
-      onUpdateCreature(updatedCreature);
-    }
-  };
-
-  const handleChangeDuration = (fIndex: number, newDur: number) => {
-    if (!activeAnim || !onUpdateCreature || newDur < 1) return;
-
-    const updatedCreature: Creature = JSON.parse(JSON.stringify(creature));
-    const targetAnim = updatedCreature.animations.find((a) => a.id === activeAnim.id);
-    if (!targetAnim) return;
-
-    targetAnim.durations[fIndex] = newDur;
-    for (let d = 0; d < 8; d++) {
-      if (targetAnim.framesByDirection[d]?.[fIndex]) {
-        targetAnim.framesByDirection[d][fIndex].duration = newDur;
-      }
-    }
-
-    onUpdateCreature(updatedCreature);
-  };
-
-  const handleExportAnimationPNG = async () => {
-    if (!activeAnim) return;
-    try {
-      const dataUrl = await assembleSpriteSheet(
-        activeAnim.framesByDirection,
-        activeAnim.frameWidth,
-        activeAnim.frameHeight,
-        8
-      );
-      
-      const link = document.createElement("a");
-      link.href = dataUrl;
-      link.download = `${creature.numericId}-${activeAnim.name}-Anim.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } catch (err) {
-      console.error("Failed to export animation PNG", err);
-    }
-  };
-
-  return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header Info */}
-      <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 shadow-xl">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-mono text-indigo-400 font-bold">#{creature.numericId}</span>
-            <h2 className="text-xl font-bold text-slate-100">{creature.displayName}</h2>
-            <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700 capitalize">
-              {creature.sourceKind}
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Licença: <span className="text-slate-300">{creature.license}</span> • Origem:{" "}
-            <span className="text-slate-300">{creature.provenance.origin}</span>
-          </p>
-        </div>
-
-        {/* Quick Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
-          {creature.sourceKind === "remote" && (
-            <button
-              onClick={() => onDuplicateToLocal(creature)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg shadow transition cursor-pointer"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>Duplicar para Projeto Local</span>
-            </button>
-          )}
-
-          <button
-            onClick={() =>
-              activeAnim && onOpenPixelEditor(creature, activeAnim.id, currentFrameIndex, direction)
-            }
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-          >
-            <Edit3 className="w-3.5 h-3.5 text-amber-400" />
-            <span>Editar Frame no Canvas</span>
-          </button>
-
-          <button
-            onClick={() => activeAnim && onOpenAiLab(creature, activeAnim.name, direction)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold rounded-lg shadow transition cursor-pointer"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>IA Nano Banana</span>
-          </button>
-
-          <button
-            onClick={() => onOpenNpcTest(creature)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-          >
-            <Bot className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Simulador NPC</span>
-          </button>
-
-          <button
-            onClick={() => onExportZip(creature)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5 text-blue-400" />
-            <span>Exportar ZIP</span>
-          </button>
+  if (!animation) {
+    return (
+      <div className="mx-auto max-w-4xl p-6">
+        <div className="rounded-xl border border-amber-700/50 bg-amber-950/40 p-5 text-amber-100">
+          Este personagem não possui animações carregadas.
         </div>
       </div>
+    );
+  }
 
-      {/* Main Workspace Layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Side: Animation Selector & Info */}
-        <div className="lg:col-span-4 space-y-4">
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 shadow-lg">
-            <h3 className="text-sm font-bold text-slate-200 flex items-center justify-between">
-              <span>Animações do Personagem</span>
-              <span className="text-xs font-mono text-slate-400">{creature.animations.length} disponíveis</span>
-            </h3>
+  const updateDuration = (nextDuration: number) => {
+    if (readOnly || !onUpdateCreature || !Number.isInteger(nextDuration) || nextDuration < 1) {
+      return;
+    }
+    const updated = cloneCreature(creature);
+    const target = updated.animations.find((candidate) => candidate.id === animation.id);
+    if (!target) return;
+    target.durations[frameIndex] = nextDuration;
+    for (let index = 0; index < target.directions; index += 1) {
+      const frame = target.framesByDirection[index]?.[frameIndex];
+      if (frame) frame.duration = nextDuration;
+    }
+    onUpdateCreature(updated);
+  };
 
-            <div className="space-y-1 max-h-72 overflow-y-auto pr-1">
-              {creature.animations.map((anim, idx) => {
-                const isSelected = selectedAnimIndex === idx;
-                return (
-                  <button
-                    key={anim.id || idx}
-                    onClick={() => {
-                      setSelectedAnimIndex(idx);
-                      setCurrentFrameIndex(0);
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition text-left cursor-pointer ${
-                      isSelected
-                        ? "bg-indigo-600 text-white font-semibold shadow"
-                        : "bg-slate-950 text-slate-300 hover:bg-slate-800 hover:text-slate-100 border border-slate-800/80"
-                    }`}
-                  >
-                    <span>{anim.name}</span>
-                    <span className="text-[10px] opacity-75 font-mono">
-                      {anim.frameWidth}x{anim.frameHeight} | {anim.durations?.length || 0}f
-                    </span>
-                  </button>
-                );
-              })}
+  const nudgeAnchor = (x: number, y: number, target: "origin" | "shadow") => {
+    if (readOnly || !onUpdateCreature || !currentFrame) return;
+    const updated = cloneCreature(creature);
+    const targetAnimation = updated.animations.find(
+      (candidate) => candidate.id === animation.id,
+    );
+    const frame = targetAnimation?.framesByDirection[direction]?.[frameIndex];
+    if (!frame) return;
+
+    if (target === "origin") {
+      frame.origin = { x: frame.origin.x + x, y: frame.origin.y + y };
+      frame.offsetsDataUrl = undefined;
+    } else {
+      const current = frame.shadowOrigin || frame.origin;
+      frame.shadowOrigin = { x: current.x + x, y: current.y + y };
+      frame.shadowDataUrl = undefined;
+    }
+    onUpdateCreature(updated);
+  };
+
+  const exportCurrentLayer = async () => {
+    setExporting(true);
+    try {
+      const dataUrl = await assembleSpriteSheet(
+        animation.framesByDirection,
+        animation.frameWidth,
+        animation.frameHeight,
+        animation.directions,
+        layer,
+      );
+      const suffix =
+        layer === "sprite" ? "Anim" : layer === "offsets" ? "Offsets" : "Shadow";
+      downloadDataUrl(
+        dataUrl,
+        `${creature.numericId}-${animation.name}-${suffix}.png`,
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const visibleUrl = frameLayerUrl(currentFrame, layer);
+
+  return (
+    <div className="mx-auto max-w-[1500px] space-y-4 p-3 md:p-6">
+      <section className="rounded-xl border border-slate-800 bg-slate-900 p-4 shadow-xl">
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-mono text-xs font-bold text-indigo-400">
+                #{creature.numericId}
+              </span>
+              <h2 className="text-xl font-bold text-white">{creature.displayName}</h2>
+              <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[11px] uppercase text-slate-300">
+                {creature.sourceKind}
+              </span>
             </div>
+            <p className="mt-1 text-xs text-slate-400">
+              {creature.provenance.origin} · {creature.provenance.author}
+            </p>
+          </div>
 
+          <div className="flex flex-wrap gap-2">
+            {readOnly && (
+              <button
+                type="button"
+                onClick={() => onDuplicateToLocal(creature)}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
+              >
+                <Copy className="h-3.5 w-3.5" /> Duplicar para editar
+              </button>
+            )}
             <button
-              onClick={handleExportAnimationPNG}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer mt-2"
+              type="button"
+              onClick={() =>
+                onOpenPixelEditor(creature, animation.id, frameIndex, direction)
+              }
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700"
             >
-              <Download className="w-3.5 h-3.5 text-blue-400" />
-              <span>Baixar Spritesheet ({activeAnim?.name})</span>
+              <Edit3 className="h-3.5 w-3.5 text-amber-400" /> Editar frame
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenAiLab(creature, animation.name, direction)}
+              className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-500"
+            >
+              <Sparkles className="h-3.5 w-3.5" /> Gerar com IA
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenNpcTest(creature)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700"
+            >
+              <Bot className="h-3.5 w-3.5 text-emerald-400" /> Testar NPC
+            </button>
+            <button
+              type="button"
+              onClick={() => onExportZip(creature)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700"
+            >
+              <Download className="h-3.5 w-3.5 text-blue-400" /> Exportar pacote
             </button>
           </div>
-
-          {/* Directional Dial Selector */}
-          <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 shadow-lg">
-            <h3 className="text-sm font-bold text-slate-200 flex items-center gap-2">
-              <Compass className="w-4 h-4 text-indigo-400" />
-              Direção (8-Direções SpriteCollab)
-            </h3>
-
-            <select
-              value={direction}
-              onChange={(e) => setDirection(Number(e.target.value))}
-              className="w-full bg-slate-950 border border-slate-800 text-slate-200 text-xs rounded-lg px-3 py-2 focus:outline-none focus:border-indigo-500"
-            >
-              {directionLabels.map((lbl, idx) => (
-                <option key={idx} value={idx}>
-                  {lbl}
-                </option>
-              ))}
-            </select>
-
-            <div className="grid grid-cols-3 gap-1.5 pt-2">
-              {[
-                { dir: 3, label: "NW" },
-                { dir: 4, label: "N" },
-                { dir: 5, label: "NE" },
-                { dir: 2, label: "W" },
-                { dir: 0, label: "S (0)" },
-                { dir: 6, label: "E" },
-                { dir: 1, label: "SW" },
-                { dir: 0, label: "S" },
-                { dir: 7, label: "SE" },
-              ].map((dItem, i) => {
-                const isActive = direction === dItem.dir;
-                return (
-                  <button
-                    key={i}
-                    onClick={() => setDirection(dItem.dir)}
-                    className={`py-1.5 text-xs font-bold rounded border transition cursor-pointer ${
-                      isActive
-                        ? "bg-indigo-600 text-white border-indigo-500"
-                        : "bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-slate-200"
-                    }`}
-                  >
-                    {dItem.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
         </div>
+      </section>
 
-        {/* Center / Right: Canvas Preview & Timeline */}
-        <div className="lg:col-span-8 space-y-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-4 shadow-xl">
-            {/* Stage Controls */}
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
+      <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)_290px]">
+        <aside className="space-y-4">
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-white">Ações</h3>
+              <span className="font-mono text-[11px] text-slate-500">
+                {creature.animations.length}
+              </span>
+            </div>
+            <div className="max-h-[420px] space-y-1 overflow-y-auto pr-1">
+              {creature.animations.map((candidate) => (
                 <button
-                  onClick={() => setShowMultiDirView(!showMultiDirView)}
-                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-semibold transition cursor-pointer border ${
-                    showMultiDirView
-                      ? "bg-indigo-600 text-white border-indigo-500 shadow"
-                      : "bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800"
+                  type="button"
+                  key={candidate.id}
+                  onClick={() => setSelectedAnimationId(candidate.id)}
+                  className={`w-full rounded-lg border px-3 py-2 text-left transition ${
+                    candidate.id === animation.id
+                      ? "border-indigo-500 bg-indigo-600 text-white"
+                      : "border-slate-800 bg-slate-950 text-slate-300 hover:border-slate-700"
                   }`}
                 >
-                  <Eye className="w-3.5 h-3.5" />
-                  <span>{showMultiDirView ? "Visão Direção Única" : "Visão Multi-Direções (8 Direções)"}</span>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold">{candidate.name}</span>
+                    <span className="font-mono text-[10px] opacity-70">
+                      {candidate.durations.length}f · {candidate.directions}d
+                    </span>
+                  </div>
+                  {candidate.copyOf && (
+                    <span className="mt-1 block text-[10px] opacity-75">
+                      CopyOf: {candidate.copyOf}
+                    </span>
+                  )}
                 </button>
+              ))}
+            </div>
+          </section>
 
-                <span className="text-slate-500">|</span>
-                <span className="text-slate-400">Fundo:</span>
-                {(["checker", "magenta", "grass"] as const).map((mode) => (
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <h3 className="mb-3 text-sm font-bold text-white">Direção PMD</h3>
+            <div className="grid grid-cols-4 gap-2">
+              {availableDirections.map((item) => (
+                <button
+                  type="button"
+                  key={item.index}
+                  title={item.name}
+                  onClick={() => {
+                    setDirection(item.index);
+                    setFrameIndex(0);
+                  }}
+                  className={`rounded-lg border px-2 py-2 text-xs font-bold ${
+                    item.index === direction
+                      ? "border-indigo-400 bg-indigo-600 text-white"
+                      : "border-slate-700 bg-slate-950 text-slate-400 hover:text-white"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </section>
+        </aside>
+
+        <main className="min-w-0 space-y-4">
+          <section className="overflow-hidden rounded-xl border border-slate-800 bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-bold text-white">
+                  {animation.name} · {DIRECTIONS[direction]?.name || "Única"}
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {animation.frameWidth}×{animation.frameHeight}px · frame {frameIndex + 1}/
+                  {frames.length} · {currentFrame?.duration || 0} ticks
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPlaying((value) => !value)}
+                  className="rounded-lg border border-slate-700 bg-slate-800 p-2 hover:bg-slate-700"
+                >
+                  {playing ? (
+                    <Pause className="h-4 w-4" />
+                  ) : (
+                    <Play className="h-4 w-4" />
+                  )}
+                </button>
+                <select
+                  value={playbackRate}
+                  onChange={(event) => setPlaybackRate(Number(event.target.value))}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs"
+                >
+                  <option value={0.5}>0,5×</option>
+                  <option value={1}>1× PMD</option>
+                  <option value={1.5}>1,5×</option>
+                  <option value={2}>2×</option>
+                </select>
+                <select
+                  value={background}
+                  onChange={(event) =>
+                    setBackground(event.target.value as keyof typeof BACKGROUNDS)
+                  }
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs"
+                >
+                  <option value="checker">Transparência</option>
+                  <option value="magenta">Magenta</option>
+                  <option value="grass">Cenário</option>
+                </select>
+                <select
+                  value={zoom}
+                  onChange={(event) => setZoom(Number(event.target.value))}
+                  className="rounded-lg border border-slate-700 bg-slate-950 px-2 py-2 text-xs"
+                >
+                  {[2, 3, 4, 5, 6, 8, 10].map((value) => (
+                    <option key={value} value={value}>
+                      {value}×
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div
+              className="relative flex min-h-[420px] items-center justify-center overflow-auto p-8"
+              style={{ background: BACKGROUNDS[background] }}
+            >
+              {visibleUrl ? (
+                <div
+                  className="relative shrink-0"
+                  style={{
+                    width: animation.frameWidth * zoom,
+                    height: animation.frameHeight * zoom,
+                  }}
+                >
+                  <img
+                    src={visibleUrl}
+                    alt={`${animation.name} frame ${frameIndex + 1}`}
+                    className="absolute inset-0 h-full w-full object-contain"
+                    style={{ imageRendering: "pixelated" }}
+                  />
+                  {layer === "sprite" && showAnchors && currentFrame && (
+                    <>
+                      <span
+                        title="Origem corporal (verde)"
+                        className="pointer-events-none absolute z-10 block rounded-full border border-black bg-emerald-400"
+                        style={{
+                          width: Math.max(4, zoom),
+                          height: Math.max(4, zoom),
+                          left: currentFrame.origin.x * zoom - zoom / 2,
+                          top: currentFrame.origin.y * zoom - zoom / 2,
+                        }}
+                      />
+                      {currentFrame.shadowOrigin && (
+                        <span
+                          title="Origem da sombra (branca)"
+                          className="pointer-events-none absolute z-10 block rounded-full border border-black bg-white"
+                          style={{
+                            width: Math.max(4, zoom),
+                            height: Math.max(4, zoom),
+                            left: currentFrame.shadowOrigin.x * zoom - zoom / 2,
+                            top: currentFrame.shadowOrigin.y * zoom - zoom / 2,
+                          }}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-amber-700/50 bg-amber-950/60 p-4 text-sm text-amber-100">
+                  A camada {layer} não existe neste frame.
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3 overflow-x-auto border-t border-slate-800 bg-slate-950/70 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setFrameIndex((value) => (value - 1 + frames.length) % frames.length)}
+                disabled={!frames.length}
+                className="rounded-lg border border-slate-700 p-2 disabled:opacity-30"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto py-1">
+                {frames.map((frame, index) => (
                   <button
-                    key={mode}
-                    onClick={() => setBgMode(mode)}
-                    className={`px-2 py-0.5 rounded capitalize transition cursor-pointer border ${
-                      bgMode === mode
-                        ? "bg-indigo-600 text-white border-indigo-500 font-semibold"
-                        : "bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-200"
+                    type="button"
+                    key={frame.id}
+                    onClick={() => setFrameIndex(index)}
+                    className={`relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border-2 bg-slate-900 p-1 ${
+                      index === frameIndex
+                        ? "border-indigo-400"
+                        : "border-slate-800 opacity-70 hover:opacity-100"
                     }`}
                   >
-                    {mode === "checker" ? "Xadrez" : mode === "magenta" ? "Magenta" : "Grama"}
+                    <img
+                      src={frame.dataUrl}
+                      alt={`Frame ${index + 1}`}
+                      className="h-full w-full object-contain"
+                      style={{ imageRendering: "pixelated" }}
+                    />
+                    <span className="absolute bottom-0 right-0 bg-black/80 px-1 font-mono text-[9px]">
+                      {frame.duration}
+                    </span>
                   </button>
                 ))}
               </div>
-
-              <div className="flex items-center gap-3">
-                <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={showGrid}
-                    onChange={(e) => setShowGrid(e.target.checked)}
-                    className="rounded border-slate-800 text-indigo-600 focus:ring-0"
-                  />
-                  <span>Grade</span>
-                </label>
-
-                <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={viewMode === "isometric"}
-                    onChange={(e) => setViewMode(e.target.checked ? "isometric" : "standard")}
-                    className="rounded border-slate-800 text-indigo-600 focus:ring-0"
-                  />
-                  <span className="text-emerald-400 font-medium">Isométrica</span>
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={showShadow}
-                    onChange={(e) => setShowShadow(e.target.checked)}
-                    className="rounded border-slate-800 text-indigo-600 focus:ring-0"
-                  />
-                  <span>Sombra</span>
-                </label>
-
-                <div className="flex items-center gap-1">
-                  <span className="text-slate-400">Zoom:</span>
-                  {[2, 3, 4, 6].map((z) => (
-                    <button
-                      key={z}
-                      onClick={() => setZoomLevel(z)}
-                      className={`px-1.5 py-0.5 rounded font-mono text-[10px] cursor-pointer ${
-                        zoomLevel === z ? "bg-indigo-600 text-white font-bold" : "text-slate-400 hover:text-slate-200"
-                      }`}
-                    >
-                      {z}x
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Canvas Stage Display (Single or 8-Direction Grid) */}
-            {showMultiDirView ? (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950 p-4 rounded-xl border border-slate-800">
-                {[0, 1, 2, 3, 4, 5, 6, 7].map((dirIdx) => {
-                  const dirFrames = activeAnim?.framesByDirection?.[dirIdx] || [];
-                  const dirFrame = dirFrames[currentFrameIndex] || dirFrames[0];
-                  return (
-                    <div
-                      key={dirIdx}
-                      onClick={() => {
-                        setDirection(dirIdx);
-                        setShowMultiDirView(false);
-                      }}
-                      className={`p-3 rounded-xl border flex flex-col items-center justify-between gap-2 cursor-pointer transition ${
-                        direction === dirIdx
-                          ? "bg-indigo-950/60 border-indigo-500 shadow-lg ring-1 ring-indigo-500"
-                          : "bg-slate-900 border-slate-800 hover:border-slate-700"
-                      }`}
-                    >
-                      <span className="text-[10px] font-mono text-slate-400 font-semibold">
-                        Dir {dirIdx}: {["S", "SE", "E", "NE", "N", "NW", "W", "SW"][dirIdx]}
-                      </span>
-                      <div className="w-16 h-16 flex items-center justify-center relative">
-                        {dirFrame?.dataUrl ? (
-                          <img
-                            src={dirFrame.dataUrl}
-                            alt={`Dir ${dirIdx}`}
-                            className="image-pixelated object-contain max-h-14 max-w-full"
-                          />
-                        ) : (
-                          <span className="text-[10px] text-slate-600">Sem Frame</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div
-                className={`rounded-xl border border-slate-800 h-80 flex items-center justify-center relative overflow-hidden transition-all ${
-                  bgMode === "checker"
-                    ? "bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:16px_16px] bg-slate-950"
-                    : bgMode === "magenta"
-                    ? "bg-[#ff00ff]"
-                    : "bg-emerald-900/40"
-                }`}
+              <button
+                type="button"
+                onClick={() => setFrameIndex((value) => (value + 1) % frames.length)}
+                disabled={!frames.length}
+                className="rounded-lg border border-slate-700 p-2 disabled:opacity-30"
               >
-                {/* Action Frame Badges */}
-                <div className="absolute top-3 left-3 flex items-center gap-1.5 z-30">
-                  {activeAnim?.hitFrame !== undefined && activeAnim.hitFrame === currentFrameIndex && (
-                    <span className="bg-rose-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow flex items-center gap-1">
-                      <Zap className="w-3 h-3" /> Hit Frame ({activeAnim.hitFrame})
-                    </span>
-                  )}
-                  {activeAnim?.rushFrame !== undefined && activeAnim.rushFrame === currentFrameIndex && (
-                    <span className="bg-amber-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow flex items-center gap-1">
-                      Rush Frame ({activeAnim.rushFrame})
-                    </span>
-                  )}
-                  {activeAnim?.returnFrame !== undefined && activeAnim.returnFrame === currentFrameIndex && (
-                    <span className="bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded-full font-bold shadow flex items-center gap-1">
-                      Return Frame ({activeAnim.returnFrame})
-                    </span>
-                  )}
-                </div>
-
-                {currentFrame?.dataUrl ? (
-                  <div className="relative flex items-center justify-center w-full h-full pointer-events-none">
-                    {/* Shadow preview under sprite */}
-                    {showShadow && (
-                      <div
-                        className="absolute bg-black/40 rounded-full blur-[1px]"
-                        style={{
-                          width: (activeAnim?.frameWidth || 32) * (zoomLevel * 0.6),
-                          height: 8 * (zoomLevel * 0.4),
-                        }}
-                      />
-                    )}
-
-                    {/* Frame Image */}
-                    <img
-                      src={currentFrame.dataUrl}
-                      alt={`Frame ${currentFrameIndex}`}
-                      className="image-pixelated drop-shadow-xl absolute z-10"
-                      style={{
-                        width: (activeAnim?.frameWidth || 32) * zoomLevel,
-                        height: (activeAnim?.frameHeight || 32) * zoomLevel,
-                        transform: `translate(${( (activeAnim?.frameWidth || 32) / 2 - (currentFrame.origin?.x || (activeAnim?.frameWidth || 32) / 2) ) * zoomLevel}px, ${( (activeAnim?.frameHeight || 32) / 2 - (currentFrame.origin?.y || (activeAnim?.frameHeight || 32) / 2) ) * zoomLevel}px)`
-                      }}
-                    />
-
-                    {/* Isometric Grid Overlay */}
-                    {viewMode === "isometric" && (
-                      <div className="absolute pointer-events-none z-0" style={{ width: 0, height: 0 }}>
-                        <svg className="overflow-visible" width="0" height="0" style={{ position: 'absolute', top: 0, left: 0 }}>
-                          <g transform="scale(1, 0.5) rotate(45)">
-                            <rect x="-100" y="-100" width="200" height="200" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="2"/>
-                            <rect x="-50" y="-50" width="100" height="100" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="2"/>
-                            <line x1="-200" y1="0" x2="200" y2="0" stroke="rgba(100,200,255,0.3)" strokeWidth="2" />
-                            <line x1="0" y1="-200" x2="0" y2="200" stroke="rgba(100,200,255,0.3)" strokeWidth="2" />
-                          </g>
-                        </svg>
-                        {/* Center Anchor Point (Red Cross) */}
-                        <div className="absolute w-2 h-2 -ml-1 -mt-1 bg-red-500 rounded-full shadow-lg border border-white" />
-                      </div>
-                    )}
-
-                    {/* Pixel Grid Overlay */}
-                    {showGrid && viewMode === "standard" && (
-                      <div
-                        className="absolute border border-indigo-500/30 pointer-events-none z-20"
-                        style={{
-                          width: (activeAnim?.frameWidth || 32) * zoomLevel,
-                          height: (activeAnim?.frameHeight || 32) * zoomLevel,
-                          transform: `translate(${( (activeAnim?.frameWidth || 32) / 2 - (currentFrame.origin?.x || (activeAnim?.frameWidth || 32) / 2) ) * zoomLevel}px, ${( (activeAnim?.frameHeight || 32) / 2 - (currentFrame.origin?.y || (activeAnim?.frameHeight || 32) / 2) ) * zoomLevel}px)`
-                        }}
-                      />
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-slate-500 text-xs flex flex-col items-center gap-2">
-                    <RotateCcw className="w-6 h-6 animate-spin text-indigo-400" />
-                    <span>Carregando frame da animação...</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Playback Controls & Timeline Bar */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentFrameIndex((prev) => (prev > 0 ? prev - 1 : frames.length - 1))}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition cursor-pointer"
-                  >
-                    <SkipBack className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    onClick={() => setIsPlaying(!isPlaying)}
-                    className="p-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg shadow transition cursor-pointer"
-                  >
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentFrameIndex((prev) => (prev + 1) % frames.length)}
-                    className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg transition cursor-pointer"
-                  >
-                    <SkipForward className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400 font-mono flex flex-col">
-                    <span>Frame <strong className="text-slate-200">{currentFrameIndex + 1}</strong> / {frames.length}</span>
-                    {viewMode === "isometric" && currentFrame?.origin && (
-                      <span className="text-[10px] text-emerald-400 mt-1 font-semibold">
-                        Render Offset: [X: {(activeAnim?.frameWidth || 32)/2 - currentFrame.origin.x}, Y: {(activeAnim?.frameHeight || 32)/2 - currentFrame.origin.y}]
-                      </span>
-                    )}
-                  </span>
-
-                  <div className="flex items-center gap-1.5 text-xs">
-                    <span className="text-slate-400">Velocidade:</span>
-                    {[0.5, 1.0, 1.5, 2.0].map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => setPlaybackSpeed(s)}
-                        className={`px-1.5 py-0.5 rounded font-mono text-[10px] cursor-pointer ${
-                          playbackSpeed === s ? "bg-indigo-600 text-white font-bold" : "text-slate-400 hover:text-slate-200"
-                        }`}
-                      >
-                        {s}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Active Frame Action Toolbar */}
-              <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-400 font-semibold font-mono">
-                    Frame Ativo #{currentFrameIndex + 1}:
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => handleMoveFrame(currentFrameIndex, currentFrameIndex - 1)}
-                      disabled={currentFrameIndex === 0}
-                      title="Mover Frame para a Esquerda"
-                      className="p-1.5 bg-slate-900 border border-slate-800 text-slate-300 hover:text-white rounded-lg disabled:opacity-30 cursor-pointer transition"
-                    >
-                      <ArrowLeft className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleMoveFrame(currentFrameIndex, currentFrameIndex + 1)}
-                      disabled={currentFrameIndex === frames.length - 1}
-                      title="Mover Frame para a Direita"
-                      className="p-1.5 bg-slate-900 border border-slate-800 text-slate-300 hover:text-white rounded-lg disabled:opacity-30 cursor-pointer transition"
-                    >
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                  <div className="w-px h-5 bg-slate-800 mx-1" />
-                  <span className="text-[10px] text-slate-500 font-mono">Pivot:</span>
-                  <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded-lg p-0.5">
-                    <button onClick={() => handleNudgeOrigin(1, 0)} title="Mover sprite p/ Esquerda (deslocar Pivot Direita)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowLeft className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleNudgeOrigin(0, 1)} title="Mover sprite p/ Cima (deslocar Pivot Baixo)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowUp className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleNudgeOrigin(0, -1)} title="Mover sprite p/ Baixo (deslocar Pivot Cima)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowDown className="w-3.5 h-3.5" /></button>
-                    <button onClick={() => handleNudgeOrigin(-1, 0)} title="Mover sprite p/ Direita (deslocar Pivot Esquerda)" className="p-1 hover:bg-slate-800 rounded text-slate-300"><ArrowRight className="w-3.5 h-3.5" /></button>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 px-2 py-1 rounded-lg">
-                    <Clock className="w-3.5 h-3.5 text-indigo-400" />
-                    <span className="text-[11px] text-slate-400">Duração:</span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={currentFrame?.duration || 6}
-                      onChange={(e) => handleChangeDuration(currentFrameIndex, Number(e.target.value))}
-                      className="w-12 bg-slate-950 border border-slate-800 text-slate-200 font-mono text-center rounded px-1 text-xs focus:outline-none"
-                    />
-                    <span className="text-[10px] text-slate-500">ticks</span>
-                  </div>
-
-                  <button
-                    onClick={() => handleDuplicateFrame(currentFrameIndex)}
-                    title="Duplicar Frame em todas as 8 direções"
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white font-semibold text-xs rounded-lg transition cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Duplicar Frame</span>
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      if (currentFrame?.dataUrl) {
-                        const link = document.createElement("a");
-                        link.href = currentFrame.dataUrl;
-                        link.download = `${creature.numericId}_${activeAnim?.name}_dir${direction}_f${currentFrameIndex}.png`;
-                        link.click();
-                      }
-                    }}
-                    title="Baixar Frame Atual"
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-900/60 border border-emerald-700/50 hover:bg-emerald-800 text-emerald-200 font-semibold text-xs rounded-lg cursor-pointer transition"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Baixar Frame</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleDeleteFrame(currentFrameIndex)}
-                    disabled={frames.length <= 1}
-                    title="Deletar Frame"
-                    className="flex items-center gap-1 px-2.5 py-1.5 bg-rose-900/60 border border-rose-700/50 hover:bg-rose-800 text-rose-200 font-semibold text-xs rounded-lg disabled:opacity-30 cursor-pointer transition"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Deletar</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Frame Timeline Strip */}
-              <div className="flex items-center gap-2 overflow-x-auto p-2 bg-slate-950 border border-slate-800 rounded-xl scrollbar-none">
-                {frames.map((frame, fIdx) => {
-                  const isActive = fIdx === currentFrameIndex;
-                  return (
-                    <button
-                      key={frame.id || fIdx}
-                      onClick={() => {
-                        setCurrentFrameIndex(fIdx);
-                        setIsPlaying(false);
-                      }}
-                      className={`flex-shrink-0 w-14 h-14 rounded-lg border p-1 flex flex-col items-center justify-between transition cursor-pointer relative ${
-                        isActive
-                          ? "bg-indigo-900/50 border-indigo-500 ring-2 ring-indigo-500/50 shadow-lg scale-105"
-                          : "bg-slate-900 border-slate-800 hover:border-slate-700"
-                      }`}
-                    >
-                      <img src={frame.dataUrl} alt={`Frame ${fIdx}`} className="max-h-8 max-w-full object-contain image-pixelated" />
-                      <span className="text-[9px] font-mono text-slate-400">f{fIdx + 1} ({frame.duration}t)</span>
-                    </button>
-                  );
-                })}
-              </div>
+                <ChevronRight className="h-4 w-4" />
+              </button>
             </div>
-          </div>
-        </div>
+          </section>
+
+          {showAllDirections && animation.directions === 8 && (
+            <section className="grid grid-cols-2 gap-3 rounded-xl border border-slate-800 bg-slate-900 p-4 md:grid-cols-4">
+              {DIRECTIONS.map((item) => {
+                const frame = animation.framesByDirection[item.index]?.[frameIndex];
+                return (
+                  <button
+                    type="button"
+                    key={item.index}
+                    onClick={() => setDirection(item.index)}
+                    className={`rounded-lg border p-3 ${
+                      direction === item.index
+                        ? "border-indigo-500 bg-indigo-950/50"
+                        : "border-slate-800 bg-slate-950"
+                    }`}
+                  >
+                    <span className="mb-2 block text-xs font-bold text-slate-300">
+                      {item.label}
+                    </span>
+                    {frame && (
+                      <img
+                        src={frame.dataUrl}
+                        alt={item.name}
+                        className="mx-auto h-20 w-20 object-contain"
+                        style={{ imageRendering: "pixelated" }}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </section>
+          )}
+        </main>
+
+        <aside className="space-y-4">
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <h3 className="mb-3 flex items-center gap-2 text-sm font-bold text-white">
+              <Layers3 className="h-4 w-4 text-indigo-400" /> Camadas técnicas
+            </h3>
+            <div className="grid grid-cols-3 gap-2">
+              {(["sprite", "offsets", "shadow"] as SpriteSheetLayer[]).map(
+                (candidate) => (
+                  <button
+                    type="button"
+                    key={candidate}
+                    onClick={() => setLayer(candidate)}
+                    className={`rounded-lg border px-2 py-2 text-[11px] font-semibold capitalize ${
+                      layer === candidate
+                        ? "border-indigo-400 bg-indigo-600 text-white"
+                        : "border-slate-700 bg-slate-950 text-slate-400"
+                    }`}
+                  >
+                    {candidate}
+                  </button>
+                ),
+              )}
+            </div>
+            <label className="mt-3 flex items-center justify-between text-xs text-slate-300">
+              <span className="flex items-center gap-2">
+                <Eye className="h-3.5 w-3.5" /> Mostrar âncoras
+              </span>
+              <input
+                type="checkbox"
+                checked={showAnchors}
+                onChange={(event) => setShowAnchors(event.target.checked)}
+              />
+            </label>
+            <label className="mt-3 flex items-center justify-between text-xs text-slate-300">
+              <span className="flex items-center gap-2">
+                <Grid3X3 className="h-3.5 w-3.5" /> Oito direções
+              </span>
+              <input
+                type="checkbox"
+                checked={showAllDirections}
+                disabled={animation.directions !== 8}
+                onChange={(event) => setShowAllDirections(event.target.checked)}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void exportCurrentLayer()}
+              disabled={exporting}
+              className="mt-4 w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-semibold hover:bg-slate-700 disabled:opacity-50"
+            >
+              {exporting ? "Gerando PNG…" : `Baixar camada ${layer}`}
+            </button>
+          </section>
+
+          <section className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+            <h3 className="mb-3 text-sm font-bold text-white">Frame atual</h3>
+            {readOnly && (
+              <p className="mb-3 rounded border border-blue-800/60 bg-blue-950/50 p-2 text-[11px] text-blue-200">
+                Asset remoto em modo leitura. Duplique para alterar duração e âncoras.
+              </p>
+            )}
+            <label className="block text-xs text-slate-400">
+              Duração em ticks de 1/60 s
+              <input
+                type="number"
+                min={1}
+                max={600}
+                value={currentFrame?.duration || 1}
+                disabled={readOnly}
+                onChange={(event) => updateDuration(Number(event.target.value))}
+                className="mt-1 w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white disabled:opacity-50"
+              />
+            </label>
+
+            <div className="mt-4 space-y-3">
+              {(["origin", "shadow"] as const).map((target) => (
+                <div key={target}>
+                  <div className="mb-2 flex justify-between text-[11px] text-slate-400">
+                    <span>{target === "origin" ? "Âncora corporal" : "Âncora da sombra"}</span>
+                    <span className="font-mono">
+                      {target === "origin"
+                        ? `${currentFrame?.origin.x ?? "—"}, ${currentFrame?.origin.y ?? "—"}`
+                        : `${currentFrame?.shadowOrigin?.x ?? "—"}, ${currentFrame?.shadowOrigin?.y ?? "—"}`}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1">
+                    <span />
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      onClick={() => nudgeAnchor(0, -1, target)}
+                      className="rounded border border-slate-700 bg-slate-950 py-1 text-xs disabled:opacity-30"
+                    >
+                      ↑
+                    </button>
+                    <span />
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      onClick={() => nudgeAnchor(-1, 0, target)}
+                      className="rounded border border-slate-700 bg-slate-950 py-1 text-xs disabled:opacity-30"
+                    >
+                      ←
+                    </button>
+                    <span className="rounded border border-slate-800 bg-slate-950 py-1 text-center text-[10px] text-slate-600">
+                      1px
+                    </span>
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      onClick={() => nudgeAnchor(1, 0, target)}
+                      className="rounded border border-slate-700 bg-slate-950 py-1 text-xs disabled:opacity-30"
+                    >
+                      →
+                    </button>
+                    <span />
+                    <button
+                      type="button"
+                      disabled={readOnly}
+                      onClick={() => nudgeAnchor(0, 1, target)}
+                      className="rounded border border-slate-700 bg-slate-950 py-1 text-xs disabled:opacity-30"
+                    >
+                      ↓
+                    </button>
+                    <span />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {(animation.warnings?.length || animation.copyOf) && (
+            <section className="rounded-xl border border-amber-800/50 bg-amber-950/30 p-4">
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-amber-300">
+                Diagnóstico
+              </h3>
+              <ul className="space-y-1 text-[11px] text-amber-100/80">
+                {animation.copyOf && <li>• CopyOf: {animation.copyOf}</li>}
+                {animation.warnings?.map((warning, index) => (
+                  <li key={`${warning}-${index}`}>• {warning}</li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </aside>
       </div>
     </div>
   );
