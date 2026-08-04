@@ -1,30 +1,41 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Creature } from "../types";
-import { BehaviorEngine, NPCAction } from "../domain/behavior/behaviorEngine";
-import { Bot, Apple, Heart, Zap, Moon, Activity, Play, Pause, RefreshCw } from "lucide-react";
+import { BehaviorEngine } from "../domain/behavior/behaviorEngine";
+import { Play, Pause, Bot, Apple, Heart, Activity, Zap, Moon } from "lucide-react";
 
 interface BehaviorLabProps {
   creature: Creature;
 }
 
 export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
-  const [engine] = useState(() => new BehaviorEngine(640, 360));
+  const [engine] = useState(() => {
+    const e = new BehaviorEngine(640, 360);
+    e.setAvailableActions(creature.animations.map(a => a.name.toLowerCase()));
+    return e;
+  });
+
   const [npcState, setNpcState] = useState(() => engine.getState());
   const [logs, setLogs] = useState(() => engine.getLogs());
   const [isSimulating, setIsSimulating] = useState(true);
   const [sceneTheme, setSceneTheme] = useState<"grass" | "dungeon" | "town">("grass");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imageCacheRef = useRef<Record<string, HTMLImageElement>>({});
 
-  // Main Simulation Loop (60 FPS)
   useEffect(() => {
-    if (!isSimulating) return;
+    engine.setAvailableActions(creature.animations.map(a => a.name.toLowerCase()));
+  }, [creature, engine]);
 
-    let lastTime = performance.now();
+  // Main simulation loop
+  useEffect(() => {
     let animationFrameId: number;
-
+    let lastTime = performance.now();
+    
+    // To avoid React state spamming, we might want to throttle the state updates,
+    // but for now let's keep it 60fps to match the original unless it lags.
     const loop = (currentTime: number) => {
-      const dt = Math.min((currentTime - lastTime) / 1000, 0.1); // max 0.1s dt
+      if (!isSimulating) return;
+      const dt = (currentTime - lastTime) / 1000;
       lastTime = currentTime;
 
       const updatedState = engine.tick(dt);
@@ -34,7 +45,9 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
       animationFrameId = requestAnimationFrame(loop);
     };
 
-    animationFrameId = requestAnimationFrame(loop);
+    if (isSimulating) {
+      animationFrameId = requestAnimationFrame(loop);
+    }
     return () => cancelAnimationFrame(animationFrameId);
   }, [isSimulating, engine]);
 
@@ -44,17 +57,14 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
     const width = canvas.width;
     const height = canvas.height;
 
     // Draw Background Scene
     ctx.clearRect(0, 0, width, height);
-
     if (sceneTheme === "grass") {
-      ctx.fillStyle = "#15803d"; // Green grass
+      ctx.fillStyle = "#15803d";
       ctx.fillRect(0, 0, width, height);
-      // Subtle grass blades
       ctx.fillStyle = "#166534";
       for (let i = 0; i < width; i += 20) {
         for (let j = 0; j < height; j += 20) {
@@ -62,14 +72,14 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
         }
       }
     } else if (sceneTheme === "dungeon") {
-      ctx.fillStyle = "#1e293b"; // Dark slate dungeon
+      ctx.fillStyle = "#1e293b";
       ctx.fillRect(0, 0, width, height);
       ctx.strokeStyle = "#334155";
       ctx.lineWidth = 1;
       for (let x = 0; x < width; x += 32) ctx.strokeRect(x, 0, 32, height);
       for (let y = 0; y < height; y += 32) ctx.strokeRect(0, y, width, 32);
     } else {
-      ctx.fillStyle = "#78350f"; // Wood town square
+      ctx.fillStyle = "#78350f";
       ctx.fillRect(0, 0, width, height);
     }
 
@@ -80,31 +90,66 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
     ctx.fill();
 
     // Find animation frame matching NPC action and direction
-    let animName = "Walk";
-    if (npcState.currentAction === "idle" || npcState.currentAction === "lookAround") animName = "Idle";
-    if (npcState.currentAction === "eat") animName = "Eat";
-    if (npcState.currentAction === "sleep") animName = "Sleep";
-    if (npcState.currentAction === "happy") animName = "Idle";
-    if (npcState.currentAction === "attack") animName = "Attack";
-    if (npcState.currentAction === "hurt") animName = "Hurt";
-
-    const animObj =
-      creature.animations.find((a) => a.name.toLowerCase() === animName.toLowerCase()) ||
-      creature.animations[0];
+    let animName = npcState.currentAction;
+    if (npcState.currentAction === "idle" || npcState.currentAction === "lookAround" || npcState.currentAction === "happy") {
+      animName = "Idle";
+    }
+    
+    let animObj = creature.animations.find((a) => a.name.toLowerCase() === animName.toLowerCase());
+    if (!animObj) {
+      if (npcState.currentAction === "walk") animObj = creature.animations.find((a) => a.name.toLowerCase() === "walk");
+      if (!animObj) animObj = creature.animations.find((a) => a.name.toLowerCase() === "idle");
+      if (!animObj) animObj = creature.animations[0];
+    }
 
     const frames = animObj?.framesByDirection?.[npcState.direction] || animObj?.framesByDirection?.[0] || [];
-    const currentFrameIndex = Math.floor(npcState.stateTimer * 6) % Math.max(1, frames.length);
+    
+    // Calculate exact frame based on durations
+    let currentFrameIndex = 0;
+    if (frames.length > 0) {
+      const timerMs = npcState.stateTimer * 1000;
+      let totalAnimTimeMs = 0;
+      for (const f of frames) {
+        totalAnimTimeMs += (f.duration || 6) * 33.3;
+      }
+      if (totalAnimTimeMs > 0) {
+        let currentLoopMs = timerMs % totalAnimTimeMs;
+        for (let i = 0; i < frames.length; i++) {
+          const fDurationMs = (frames[i].duration || 6) * 33.3;
+          if (currentLoopMs < fDurationMs) {
+            currentFrameIndex = i;
+            break;
+          }
+          currentLoopMs -= fDurationMs;
+        }
+      }
+    }
     const frame = frames[currentFrameIndex] || frames[0];
 
     if (frame?.dataUrl) {
-      const img = new Image();
-      img.src = frame.dataUrl;
       const fw = animObj?.frameWidth || 32;
       const fh = animObj?.frameHeight || 32;
+      const originX = frame.origin?.x || (fw / 2);
+      const originY = frame.origin?.y || (fh / 2);
+      
+      const drawImage = (img: HTMLImageElement) => {
+        ctx.save();
+        ctx.translate(npcState.x, npcState.y);
+        ctx.drawImage(img, -originX * 2, -originY * 2, fw * 2, fh * 2);
+        ctx.restore();
+      };
 
-      ctx.drawImage(img, npcState.x - fw, npcState.y - fh, fw * 2, fh * 2);
+      if (imageCacheRef.current[frame.dataUrl]) {
+        drawImage(imageCacheRef.current[frame.dataUrl]);
+      } else {
+        const img = new Image();
+        img.onload = () => {
+          imageCacheRef.current[frame.dataUrl] = img;
+          drawImage(img);
+        };
+        img.src = frame.dataUrl;
+      }
     } else {
-      // Fallback shape
       ctx.fillStyle = "#facc15";
       ctx.fillRect(npcState.x - 12, npcState.y - 12, 24, 24);
     }
@@ -116,14 +161,12 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
     ctx.fillText(creature.displayName, npcState.x, npcState.y - 24);
   }, [npcState, creature, sceneTheme]);
 
-  // Handle canvas touch / click interaction
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const clickX = ((e.clientX - rect.left) / rect.width) * canvas.width;
     const clickY = ((e.clientY - rect.top) / rect.height) * canvas.height;
-
     const dx = clickX - npcState.x;
     const dy = clickY - npcState.y;
     const dist = Math.sqrt(dx * dx + dy * dy);
@@ -145,7 +188,6 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
             Simulador autônomo com máquina de estados, tomadas de decisão, necessidades e reatividade a toque.
           </p>
         </div>
-
         <div className="flex items-center gap-2">
           <button
             onClick={() => setIsSimulating(!isSimulating)}
@@ -158,7 +200,6 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Side: Stage Canvas */}
         <div className="lg:col-span-8 space-y-4">
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 shadow-xl">
             <div className="flex items-center justify-between text-xs">
@@ -178,7 +219,6 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
               </div>
             </div>
 
-            {/* Simulation Stage Canvas */}
             <div className="border border-slate-800 rounded-xl overflow-hidden shadow-2xl relative bg-slate-950 flex justify-center">
               <canvas
                 ref={canvasRef}
@@ -190,46 +230,36 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
             </div>
 
             {/* Interactive Control Palette */}
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1">
+            <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-2 pt-1">
               <button
                 onClick={() => engine.interactFeed()}
                 className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
+                title="Aumenta Fome e Felicidade"
               >
                 <Apple className="w-3.5 h-3.5 text-rose-400" />
                 <span>Alimentar</span>
               </button>
-
               <button
                 onClick={() => engine.interactPet()}
                 className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
+                title="Aumenta Felicidade"
               >
                 <Heart className="w-3.5 h-3.5 text-pink-400" />
                 <span>Carinho</span>
               </button>
-
-              <button
-                onClick={() => engine.interactAttack()}
-                className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-              >
-                <Zap className="w-3.5 h-3.5 text-amber-400" />
-                <span>Atacar</span>
-              </button>
-
-              <button
-                onClick={() => engine.forceState("sleep")}
-                className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-              >
-                <Moon className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Dormir</span>
-              </button>
-
-              <button
-                onClick={() => engine.interactHurt()}
-                className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
-              >
-                <Activity className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Reagir</span>
-              </button>
+              
+              {/* Dynamically list available animations to test */}
+              {creature.animations.map((anim) => (
+                <button
+                  key={anim.id}
+                  onClick={() => engine.forceState(anim.name.toLowerCase())}
+                  className="flex items-center justify-center gap-1.5 p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition cursor-pointer"
+                  title={`Testar animação ${anim.name}`}
+                >
+                  <Activity className="w-3.5 h-3.5 text-indigo-400" />
+                  <span className="truncate max-w-[80px]">{anim.name}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
@@ -237,8 +267,7 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
         {/* Right Side: State Inspector & Logs */}
         <div className="lg:col-span-4 space-y-4">
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-4 shadow-lg">
-            <h3 className="text-sm font-bold text-slate-200">Status & Necessidades do NPC</h3>
-
+            <h3 className="text-sm font-bold text-slate-200">Status & Necessidades</h3>
             <div className="space-y-3 text-xs">
               <div>
                 <div className="flex justify-between text-slate-400 mb-1">
@@ -246,7 +275,6 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
                   <strong className="text-indigo-400 font-mono capitalize">{npcState.currentAction}</strong>
                 </div>
               </div>
-
               <div>
                 <div className="flex justify-between text-slate-400 mb-1">
                   <span>Energia:</span>
@@ -256,7 +284,6 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
                   <div className="bg-amber-500 h-full transition-all" style={{ width: `${npcState.energy}%` }} />
                 </div>
               </div>
-
               <div>
                 <div className="flex justify-between text-slate-400 mb-1">
                   <span>Fome:</span>
@@ -266,7 +293,6 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
                   <div className="bg-rose-500 h-full transition-all" style={{ width: `${npcState.hunger}%` }} />
                 </div>
               </div>
-
               <div>
                 <div className="flex justify-between text-slate-400 mb-1">
                   <span>Felicidade:</span>
@@ -281,7 +307,7 @@ export const BehaviorLab: React.FC<BehaviorLabProps> = ({ creature }) => {
 
           {/* Behavior Logs */}
           <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl space-y-3 shadow-lg">
-            <h3 className="text-sm font-bold text-slate-200">Log de Transição de Estados</h3>
+            <h3 className="text-sm font-bold text-slate-200">Log de Transição</h3>
             <div className="bg-slate-950 p-3 rounded-lg h-44 overflow-y-auto space-y-1.5 font-mono text-[10px] border border-slate-800">
               {logs.map((log, idx) => (
                 <div key={idx} className="text-slate-400 flex items-start gap-1.5">

@@ -1,4 +1,6 @@
-import React, { useState, useEffect, useRef } from "react";
+const fs = require('fs');
+
+const code = `import React, { useState, useEffect, useRef } from "react";
 import { Creature, Frame } from "../types";
 import { LocalStore } from "../stores/localStore";
 import {
@@ -255,52 +257,13 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
     } else if (tool === "pipette") {
       const imgData = ctx.getImageData(x, y, 1, 1).data;
       if (imgData[3] > 0) {
-        const hex = `#${((1 << 24) + (imgData[0] << 16) + (imgData[1] << 8) + imgData[2]).toString(16).slice(1)}`;
+        const hex = \`#\${((1 << 24) + (imgData[0] << 16) + (imgData[1] << 8) + imgData[2]).toString(16).slice(1)}\`;
         setSelectedColor(hex);
         setTool("pencil");
       }
     } else if (tool === "bucket") {
-      // Implement true Flood Fill
-      const imgData = ctx.getImageData(0, 0, width, height);
-      const data = imgData.data;
-      
-      const targetIdx = (y * width + x) * 4;
-      const targetR = data[targetIdx];
-      const targetG = data[targetIdx+1];
-      const targetB = data[targetIdx+2];
-      const targetA = data[targetIdx+3];
-      
-      // Parse selected color hex to RGB
-      const fillHex = selectedColor.replace('#', '');
-      const fillR = parseInt(fillHex.substring(0,2), 16);
-      const fillG = parseInt(fillHex.substring(2,4), 16);
-      const fillB = parseInt(fillHex.substring(4,6), 16);
-      const fillA = 255;
-      
-      if (targetR === fillR && targetG === fillG && targetB === fillB && targetA === fillA) {
-        return; // Already same color
-      }
-      
-      const pixelsToCheck = [[x, y]];
-      
-      while(pixelsToCheck.length > 0) {
-        const [cx, cy] = pixelsToCheck.pop();
-        const idx = (cy * width + cx) * 4;
-        
-        if (data[idx] === targetR && data[idx+1] === targetG && data[idx+2] === targetB && data[idx+3] === targetA) {
-          data[idx] = fillR;
-          data[idx+1] = fillG;
-          data[idx+2] = fillB;
-          data[idx+3] = fillA;
-          
-          if (cx > 0) pixelsToCheck.push([cx - 1, cy]);
-          if (cx < width - 1) pixelsToCheck.push([cx + 1, cy]);
-          if (cy > 0) pixelsToCheck.push([cx, cy - 1]);
-          if (cy < height - 1) pixelsToCheck.push([cx, cy + 1]);
-        }
-      }
-      
-      ctx.putImageData(imgData, 0, 0);
+      ctx.fillStyle = selectedColor;
+      ctx.fillRect(0, 0, width, height); // Fill frame canvas
     }
   };
 
@@ -319,7 +282,7 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
 
     if (updatedCreature.sourceKind === "remote") {
       updatedCreature.sourceKind = "local";
-      updatedCreature.id = `local:${Date.now()}`;
+      updatedCreature.id = \`local:\${Date.now()}\`;
       if (!updatedCreature.displayName.includes("Editado")) {
         updatedCreature.displayName += " (Editado)";
       }
@@ -448,11 +411,11 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
                   <button
                     key={t.id}
                     onClick={() => setTool(t.id as any)}
-                    className={`flex items-center gap-2 p-2.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                    className={\`flex items-center gap-2 p-2.5 rounded-lg text-xs font-medium border transition cursor-pointer \${
                       isActive
                         ? "bg-indigo-600 text-white border-indigo-500 shadow"
                         : "bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800"
-                    }`}
+                    }\`}
                   >
                     <Icon className="w-4 h-4" />
                     <span>{t.label}</span>
@@ -579,3 +542,6 @@ export const PixelEditor: React.FC<PixelEditorProps> = ({
     </div>
   );
 };
+`
+
+fs.writeFileSync('src/components/PixelEditor.tsx', code);

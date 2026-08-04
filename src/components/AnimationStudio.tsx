@@ -57,6 +57,7 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
   const [showShadow, setShowShadow] = useState(true);
   const [showMultiDirView, setShowMultiDirView] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(4); // 4x default zoom
+  const [viewMode, setViewMode] = useState<"standard" | "isometric">("standard");
 
   const activeAnim: Animation | undefined = creature.animations[selectedAnimIndex] || creature.animations[0];
   const frames = activeAnim?.framesByDirection?.[direction] || [];
@@ -431,6 +432,15 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                 <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
                   <input
                     type="checkbox"
+                    checked={viewMode === "isometric"}
+                    onChange={(e) => setViewMode(e.target.checked ? "isometric" : "standard")}
+                    className="rounded border-slate-800 text-indigo-600 focus:ring-0"
+                  />
+                  <span className="text-emerald-400 font-medium">Isométrica</span>
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                  <input
+                    type="checkbox"
                     checked={showShadow}
                     onChange={(e) => setShowShadow(e.target.checked)}
                     className="rounded border-slate-800 text-indigo-600 focus:ring-0"
@@ -475,7 +485,7 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                       }`}
                     >
                       <span className="text-[10px] font-mono text-slate-400 font-semibold">
-                        Dir {dirIdx}: {["S", "SW", "W", "NW", "N", "NE", "E", "SE"][dirIdx]}
+                        Dir {dirIdx}: {["S", "SE", "E", "NE", "N", "NW", "W", "SW"][dirIdx]}
                       </span>
                       <div className="w-16 h-16 flex items-center justify-center relative">
                         {dirFrame?.dataUrl ? (
@@ -546,8 +556,24 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                       }}
                     />
 
+                    {/* Isometric Grid Overlay */}
+                    {viewMode === "isometric" && (
+                      <div className="absolute pointer-events-none z-0" style={{ width: 0, height: 0 }}>
+                        <svg className="overflow-visible" width="0" height="0" style={{ position: 'absolute', top: 0, left: 0 }}>
+                          <g transform="scale(1, 0.5) rotate(45)">
+                            <rect x="-100" y="-100" width="200" height="200" fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="2"/>
+                            <rect x="-50" y="-50" width="100" height="100" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="2"/>
+                            <line x1="-200" y1="0" x2="200" y2="0" stroke="rgba(100,200,255,0.3)" strokeWidth="2" />
+                            <line x1="0" y1="-200" x2="0" y2="200" stroke="rgba(100,200,255,0.3)" strokeWidth="2" />
+                          </g>
+                        </svg>
+                        {/* Center Anchor Point (Red Cross) */}
+                        <div className="absolute w-2 h-2 -ml-1 -mt-1 bg-red-500 rounded-full shadow-lg border border-white" />
+                      </div>
+                    )}
+
                     {/* Pixel Grid Overlay */}
-                    {showGrid && (
+                    {showGrid && viewMode === "standard" && (
                       <div
                         className="absolute border border-indigo-500/30 pointer-events-none z-20"
                         style={{
@@ -594,8 +620,13 @@ export const AnimationStudio: React.FC<AnimationStudioProps> = ({
                 </div>
 
                 <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400 font-mono">
-                    Frame <strong className="text-slate-200">{currentFrameIndex + 1}</strong> / {frames.length}
+                  <span className="text-xs text-slate-400 font-mono flex flex-col">
+                    <span>Frame <strong className="text-slate-200">{currentFrameIndex + 1}</strong> / {frames.length}</span>
+                    {viewMode === "isometric" && currentFrame?.origin && (
+                      <span className="text-[10px] text-emerald-400 mt-1 font-semibold">
+                        Render Offset: [X: {(activeAnim?.frameWidth || 32)/2 - currentFrame.origin.x}, Y: {(activeAnim?.frameHeight || 32)/2 - currentFrame.origin.y}]
+                      </span>
+                    )}
                   </span>
 
                   <div className="flex items-center gap-1.5 text-xs">

@@ -1,0 +1,2 @@
+# PMDSpriteManager Insights
+Done.

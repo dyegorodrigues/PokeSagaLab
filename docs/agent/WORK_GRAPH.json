@@ -1,25 +1,27 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-03T22:45:00Z",
-  "activeNodeId": "STABILIZE-003",
+  "updatedAt": "2026-08-03T23:45:00Z",
+  "activeNodeId": "STABILIZE-005",
   "nodes": [
     {
-      "id": "STABILIZE-003",
-      "title": "Fix Delete Button, Add Global Undo/Redo, Fix Zip Importer Offsets",
+      "id": "STABILIZE-005",
+      "title": "Fix BehaviorLab Physics, Animation Synchronicity, and State Variety",
       "type": "requirement",
       "status": "verified",
       "priority": "high",
       "risk": "low",
       "dependsOn": [],
       "acceptanceCriteria": [
-        "Delete button in Unified Library works without window.confirm",
-        "Undo and Redo buttons are globally accessible in the Header",
-        "Zip importer loads Offsets.png to prevent broken origins/bolinha fallback"
+        "NPC is animated using proper async Image caches rather than re-creating them on each frame",
+        "Frames transition according to their exact PMD durations mathematically",
+        "Sprite rendering is mathematically offset by its intrinsic origin coordinates",
+        "Behavior Engine includes dynamic non-hardcoded transitions to inject variety",
+        "Control palette buttons dynamically map to actual animations present in the imported character"
       ],
-      "artifacts": [],
+      "artifacts": ["BehaviorLab.tsx", "behaviorEngine.ts"],
       "tests": [],
-      "evidence": ["Replaced window.confirm with deleteConfirmId state", "App.tsx now maintains a global history stack", "importer.ts uses offsets parsing"],
-      "notes": ["User was very frustrated with iframe-blocked window.confirm and missing global undo/redo"]
+      "evidence": ["Implemented imageCacheRef", "Calculated exact millisecond offsets in frame loop", "Passed availableActions into BehaviorEngine"],
+      "notes": ["Fixed severe animation sliding and button misalignments reported by user"]
     }
   ]
 }
