@@ -15,6 +15,21 @@ function messageFromError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function geminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY?.trim());
+}
+
+function requireGemini(res: express.Response): boolean {
+  if (geminiConfigured()) return true;
+  res.status(503).json({
+    success: false,
+    code: "AI_NOT_CONFIGURED",
+    error:
+      "A geração por IA está desativada porque GEMINI_API_KEY não está configurada. O restante do SAGA SpriteLab continua disponível normalmente.",
+  });
+  return false;
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
@@ -28,6 +43,28 @@ async function startServer() {
       app: "SAGA SpriteLab AI",
       time: new Date().toISOString(),
       spriteCollabSource: "https://spriteserver.pmdcollab.org/graphql",
+      capabilities: {
+        editor: true,
+        localStorage: true,
+        importExport: true,
+        spriteCollab: true,
+        gemini: geminiConfigured(),
+      },
+    });
+  });
+
+  app.get("/api/capabilities", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({
+      editor: true,
+      localStorage: true,
+      importExport: true,
+      spriteCollab: true,
+      gemini: geminiConfigured(),
+      mode: geminiConfigured() ? "full" : "offline-editor",
+      message: geminiConfigured()
+        ? "Editor e geração por IA disponíveis."
+        : "Modo editor ativo. Configure GEMINI_API_KEY apenas para habilitar geração por IA.",
     });
   });
 
@@ -99,6 +136,7 @@ async function startServer() {
   });
 
   app.post("/api/gemini/plan", async (req, res) => {
+    if (!requireGemini(res)) return;
     try {
       const { prompt, targetCreatureId, targetAnimationName, targetDirection } = req.body;
       const plan = await createGenerationPlan(
@@ -115,6 +153,7 @@ async function startServer() {
   });
 
   app.post("/api/gemini/generate-image", async (req, res) => {
+    if (!requireGemini(res)) return;
     try {
       const { plan, referenceImage } = req.body;
       if (!plan) {
@@ -145,7 +184,10 @@ async function startServer() {
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[SAGA SpriteLab AI] Express server running on http://0.0.0.0:${PORT}`);
+    const mode = geminiConfigured() ? "full" : "offline-editor";
+    console.log(
+      `[SAGA SpriteLab AI] Express server running on http://0.0.0.0:${PORT} (${mode})`,
+    );
   });
 }
 
